@@ -1,6 +1,6 @@
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, PerspectiveCamera } from '@react-three/drei';
-import { Suspense, useMemo } from 'react';
+import { Suspense, useMemo, useState, useEffect } from 'react';
 import type { CaseInstance, TruckType } from '../core/types';
 
 interface TruckView3DProps {
@@ -11,6 +11,26 @@ interface TruckView3DProps {
 }
 
 export function TruckView3D({ truck, instances, selectedId, onSelect }: TruckView3DProps) {
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Check WebGL support
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) {
+      setError('WebGL not supported in this browser');
+    }
+  }, []);
+
+  if (error) {
+    return (
+      <div className="truck-view-3d error">
+        <p>⚠️ {error}</p>
+        <p>Please use a modern browser with WebGL support</p>
+      </div>
+    );
+  }
+
   if (!truck) {
     return (
       <div className="truck-view-3d empty">
@@ -21,7 +41,7 @@ export function TruckView3D({ truck, instances, selectedId, onSelect }: TruckVie
 
   return (
     <div className="truck-view-3d">
-      <Canvas shadows>
+      <Canvas shadows onError={(e) => setError(`3D Error: ${e.message}`)}>
         <PerspectiveCamera makeDefault position={[15, 12, 15]} fov={50} />
         <OrbitControls 
           target={[truck.innerDims.x / 2000, truck.innerDims.y / 2000, truck.innerDims.z / 2000]}
@@ -37,7 +57,7 @@ export function TruckView3D({ truck, instances, selectedId, onSelect }: TruckVie
           shadow-mapSize={[2048, 2048]}
         />
         
-        <Suspense fallback={null}>
+        <Suspense fallback={<div style={{color: 'white', padding: '2rem'}}>Loading 3D...</div>}>
           <Scene truck={truck} instances={instances} selectedId={selectedId} onSelect={onSelect} />
         </Suspense>
       </Canvas>
