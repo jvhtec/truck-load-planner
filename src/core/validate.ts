@@ -184,9 +184,10 @@ export function validatePlacement(
     else rightKg += w;
   }
 
-  const imbalance = totalWeight > 0
-    ? (Math.abs(leftKg - rightKg) / totalWeight) * 100
-    : 0;
+  // Divide by truck payload capacity (not current cargo weight) so that placing
+  // early items doesn't produce a spurious 100% imbalance reading.
+  const maxPayloadKg = Math.max(1, ctx.truck.axle.maxFrontKg + ctx.truck.axle.maxRearKg - ctx.truck.emptyWeightKg);
+  const imbalance = (Math.abs(leftKg - rightKg) / maxPayloadKg) * 100;
 
   if (imbalance > ctx.truck.balance.maxLeftRightPercentDiff) {
     violations.push('LEFT_RIGHT_IMBALANCE');

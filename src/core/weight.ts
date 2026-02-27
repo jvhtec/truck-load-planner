@@ -73,15 +73,15 @@ export function computeAxleLoads(
 export function computeLeftRightBalance(
   instances: CaseInstance[],
   skuWeights: Map<string, number>,
-  truckWidth: number
+  truck: TruckType
 ): { leftKg: number; rightKg: number; imbalancePercent: number } {
-  const midY = truckWidth / 2;
+  const midY = truck.innerDims.y / 2;
   let leftKg = 0, rightKg = 0;
 
   for (const inst of instances) {
     const weight = skuWeights.get(inst.skuId) || 0;
     const centerY = (inst.aabb.min.y + inst.aabb.max.y) / 2;
-    
+
     if (centerY < midY) {
       leftKg += weight;
     } else {
@@ -89,10 +89,11 @@ export function computeLeftRightBalance(
     }
   }
 
-  const totalKg = leftKg + rightKg;
-  const imbalancePercent = totalKg > 0 
-    ? (Math.abs(leftKg - rightKg) / totalKg) * 100 
-    : 0;
+  // Use truck payload capacity as denominator so imbalance is meaningful
+  // even when only a few light items are loaded (avoids false 100% imbalance
+  // on the very first placement).
+  const maxPayloadKg = Math.max(1, truck.axle.maxFrontKg + truck.axle.maxRearKg - truck.emptyWeightKg);
+  const imbalancePercent = (Math.abs(leftKg - rightKg) / maxPayloadKg) * 100;
 
   return { leftKg, rightKg, imbalancePercent };
 }
@@ -123,8 +124,8 @@ export function computeMetrics(
   );
 
   // L/R balance
-  const { leftKg: leftWeightKg, rightKg: rightWeightKg, imbalancePercent: lrImbalancePercent } = 
-    computeLeftRightBalance(instances, skuWeights, truck.innerDims.y);
+  const { leftKg: leftWeightKg, rightKg: rightWeightKg, imbalancePercent: lrImbalancePercent } =
+    computeLeftRightBalance(instances, skuWeights, truck);
 
   // Max stack height
   let maxStackHeightMm = 0;
@@ -140,7 +141,7 @@ export function computeMetrics(
   
   if (frontPct > 80) warnings.push(`Front axle at ${frontPct.toFixed(0)}%`);
   if (rearPct > 80) warnings.push(`Rear axle at ${rearPct.toFixed(0)}%`);
-  if (lrImbalancePercent > 10) warnings.push(`L/R imbalance at ${lrImbalancePercent.toFixed(1)}%`);
+  if (lrImbalancePercent > truck.balance.maxLeftRightPercentDiff) warnings.push(`L/R imbalance at ${lrImbalancePercent.toFixed(1)}%`);
 
   return {
     totalWeightKg,
