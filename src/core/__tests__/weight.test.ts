@@ -73,21 +73,23 @@ describe('computeAxleLoads', () => {
 });
 
 describe('computeLeftRightBalance', () => {
-  it('case on left side: all weight on left', () => {
+  it('case on left side: weight on left, imbalance relative to payload', () => {
     const inst = makeInst('a', 'SKU1', 0, 0, 0, 1000, 600, 400);
     // Y center at 300, truck mid = 1200: left side
     const weights = new Map([['SKU1', 100]]);
-    const { leftKg, rightKg, imbalancePercent } = computeLeftRightBalance([inst], weights, 2400);
+    // truck payload = 4000 + 8000 - 3500 = 8500 kg
+    const { leftKg, rightKg, imbalancePercent } = computeLeftRightBalance([inst], weights, truck);
     expect(leftKg).toBe(100);
     expect(rightKg).toBe(0);
-    expect(imbalancePercent).toBe(100);
+    // imbalance = 100 / 8500 * 100 ≈ 1.18%
+    expect(imbalancePercent).toBeCloseTo(100 / 8500 * 100, 2);
   });
 
   it('case centered: balanced', () => {
     // Place a case centered at Y=1200 exactly (truckWidth/2)
     const inst = makeInst('a', 'SKU1', 0, 1200, 0, 1000, 0, 400); // zero-width box to sit exactly at 1200
     const weights = new Map([['SKU1', 100]]);
-    const { leftKg, rightKg } = computeLeftRightBalance([inst], weights, 2400);
+    const { leftKg, rightKg } = computeLeftRightBalance([inst], weights, truck);
     // center = 1200 = midY, goes to right (>=)
     expect(rightKg).toBe(100);
     expect(leftKg).toBe(0);
