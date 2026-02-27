@@ -19,10 +19,6 @@ import { SupportGraph } from '../core/support';
 import { SpatialIndex } from '../core/spatial';
 import { supabase } from '../lib/supabase';
 
-// ============================================================================
-// Types from Supabase
-// ============================================================================
-
 interface DbTruck {
   id: string;
   truck_id: string;
@@ -65,10 +61,6 @@ interface DbLoadPlan {
   status: string;
   created_at: string;
 }
-
-// ============================================================================
-// Converters
-// ============================================================================
 
 function dbToTruck(db: DbTruck): TruckType {
   return {
@@ -113,10 +105,6 @@ function dbToCaseSku(db: DbCaseSku): CaseSKU {
   };
 }
 
-// ============================================================================
-// Public types
-// ============================================================================
-
 export interface SavedPlan {
   id: string;
   name: string;
@@ -139,21 +127,65 @@ export interface PlannerState {
   error: string | null;
 }
 
+interface CreateTruckInput {
+  truckId: string;
+  name: string;
+  innerDims: { x: number; y: number; z: number };
+  emptyWeightKg: number;
+  axle: { frontX: number; rearX: number; maxFrontKg: number; maxRearKg: number };
+  maxLeftRightPercentDiff: number;
+}
+
+interface CreateCaseInput {
+  skuId: string;
+  name: string;
+  dims: { l: number; w: number; h: number };
+  weightKg: number;
+  uprightOnly: boolean;
+  allowedYaw: Yaw[];
+  canBeBase: boolean;
+  topContactAllowed: boolean;
+  maxLoadAboveKg: number;
+  minSupportRatio: number;
+  stackClass?: string;
+}
+
 export interface PlannerActions {
   setTruck: (truck: TruckType) => void;
   placeCase: (skuId: string, position: { x: number; y: number; z: number }, yaw: Yaw) => ValidationResult;
   removeCase: (instanceId: string) => void;
+  updateInstance: (
+    instanceId: string,
+    updates: {
+      position?: { x: number; y: number; z: number };
+      yaw?: Yaw;
+      tilt?: { x: number; y: number };
+    }
+  ) => ValidationResult;
+  swapInstancePositions: (sourceId: string, targetId: string) => ValidationResult;
   runAutoPack: (skuQuantities: Map<string, number>) => void;
   clearAll: () => void;
   selectInstance: (instanceId: string | null) => void;
   savePlan: (name: string) => Promise<void>;
   loadPlan: (planId: string) => Promise<void>;
   listPlans: () => Promise<SavedPlan[]>;
+  createTruck: (input: CreateTruckInput) => Promise<void>;
+  createCase: (input: CreateCaseInput) => Promise<void>;
 }
 
-// ============================================================================
-// Hook
-// ============================================================================
+function buildValidationContext(instances: CaseInstance[], skus: Map<string, CaseSKU>) {
+  const skuWeights = new Map<string, number>();
+  skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
+
+  const supportGraph = new SupportGraph(skuWeights);
+  const spatialIndex = new SpatialIndex();
+  for (const inst of instances) {
+    supportGraph.addInstance(inst, instances);
+    spatialIndex.add(inst.id, inst.aabb);
+  }
+
+  return { supportGraph, spatialIndex, skuWeights };
+}
 
 export function usePlanner(): [PlannerState, PlannerActions] {
   const [state, setState] = useState<PlannerState>(() => ({
@@ -169,10 +201,6 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     error: null,
   }));
 
-  const [supportGraph, setSupportGraph] = useState<SupportGraph | null>(null);
-  const [spatialIndex, setSpatialIndex] = useState<SpatialIndex>(() => new SpatialIndex());
-
-  // Load data from Supabase
   useEffect(() => {
     async function loadData() {
       try {
@@ -188,19 +216,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         const cases = (casesRes.data as DbCaseSku[]).map(dbToCaseSku);
         const skus = new Map(cases.map(c => [c.skuId, c]));
 
-        setState(prev => ({
-          ...prev,
-          trucks,
-          cases,
-          skus,
-          loading: false,
-        }));
+        setState(prev => ({ ...prev, trucks, cases, skus, loading: false }));
       } catch (error: any) {
-        setState(prev => ({
-          ...prev,
-          loading: false,
-          error: error.message || 'Failed to load data',
-        }));
+        setState(prev => ({ ...prev, loading: false, error: error.message || 'Failed to load data' }));
       }
     }
 
@@ -210,40 +228,26 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   const updateMetrics = useCallback((instances: CaseInstance[], truck: TruckType | null, skus: Map<string, CaseSKU>) => {
     if (!truck) return null;
     const skuWeights = new Map<string, number>();
-    skus.forEach((sku, id) => {
-      skuWeights.set(id, sku.weightKg);
-    });
+    skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
     return computeMetrics(instances, skuWeights, truck);
   }, []);
 
   const setTruck = useCallback((truck: TruckType) => {
-    const skuWeights = new Map<string, number>();
-    setState(prev => {
-      prev.skus.forEach((sku, id) => {
-        skuWeights.set(id, sku.weightKg);
-      });
-      const graph = new SupportGraph(skuWeights);
-      setSupportGraph(graph);
-      setSpatialIndex(new SpatialIndex());
-      return {
-        ...prev,
-        truck,
-        instances: [],
-        metrics: updateMetrics([], truck, prev.skus),
-        validation: null,
-      };
-    });
+    setState(prev => ({
+      ...prev,
+      truck,
+      instances: [],
+      metrics: updateMetrics([], truck, prev.skus),
+      validation: null,
+      selectedInstanceId: null,
+    }));
   }, [updateMetrics]);
 
-  const placeCase = useCallback((
-    skuId: string,
-    position: { x: number; y: number; z: number },
-    yaw: Yaw
-  ): ValidationResult => {
+  const placeCase = useCallback((skuId: string, position: { x: number; y: number; z: number }, yaw: Yaw): ValidationResult => {
     let result: ValidationResult = { valid: false, violations: [] };
 
     setState(prev => {
-      if (!prev.truck || !supportGraph) {
+      if (!prev.truck) {
         result = { valid: false, violations: ['OUT_OF_BOUNDS'], details: { error: 'No truck selected' } };
         return prev;
       }
@@ -254,19 +258,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         return prev;
       }
 
-      const instance = createInstance(
-        `${skuId}-${Date.now()}`,
-        sku,
-        position,
-        yaw
-      );
-
-      const skuWeights = new Map<string, number>();
-      prev.skus.forEach((s, id) => {
-        skuWeights.set(id, s.weightKg);
-      });
-
-      const validation = validatePlacement(instance, {
+      const candidate = createInstance(`${skuId}-${Date.now()}`, sku, position, yaw);
+      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(prev.instances, prev.skus);
+      const validation = validatePlacement(candidate, {
         truck: prev.truck,
         skus: prev.skus,
         instances: prev.instances,
@@ -276,34 +270,140 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       });
 
       result = validation;
+      if (!validation.valid) return { ...prev, validation };
 
-      if (validation.valid) {
-        const newInstances = [...prev.instances, instance];
-        supportGraph.addInstance(instance, newInstances);
-        spatialIndex.add(instance.id, instance.aabb);
-
-        return {
-          ...prev,
-          instances: newInstances,
-          metrics: updateMetrics(newInstances, prev.truck, prev.skus),
-          validation: null,
-        };
-      }
-
-      return { ...prev, validation };
+      const newInstances = [...prev.instances, { ...candidate, tilt: { x: 0, y: 0 } }];
+      return {
+        ...prev,
+        instances: newInstances,
+        metrics: updateMetrics(newInstances, prev.truck, prev.skus),
+        validation: null,
+      };
     });
 
     return result;
-  }, [supportGraph, updateMetrics]);
+  }, [updateMetrics]);
+
+  const updateInstance = useCallback((
+    instanceId: string,
+    updates: { position?: { x: number; y: number; z: number }; yaw?: Yaw; tilt?: { x: number; y: number } }
+  ): ValidationResult => {
+    let result: ValidationResult = { valid: false, violations: [] };
+
+    setState(prev => {
+      if (!prev.truck) return prev;
+      const current = prev.instances.find(i => i.id === instanceId);
+      if (!current) return prev;
+      const sku = prev.skus.get(current.skuId);
+      if (!sku) return prev;
+
+      const candidate: CaseInstance = {
+        ...current,
+        position: updates.position ?? current.position,
+        yaw: updates.yaw ?? current.yaw,
+        tilt: updates.tilt ?? current.tilt ?? { x: 0, y: 0 },
+      };
+      candidate.aabb = computeAABB(sku, candidate.position, candidate.yaw);
+
+      const withoutCurrent = prev.instances.filter(i => i.id !== instanceId);
+      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(withoutCurrent, prev.skus);
+      const validation = validatePlacement(candidate, {
+        truck: prev.truck,
+        skus: prev.skus,
+        instances: withoutCurrent,
+        supportGraph,
+        skuWeights,
+        spatialIndex,
+      });
+      result = validation;
+
+      if (!validation.valid) return { ...prev, validation };
+
+      const newInstances = prev.instances.map(i => (i.id === instanceId ? candidate : i));
+      return {
+        ...prev,
+        instances: newInstances,
+        metrics: updateMetrics(newInstances, prev.truck, prev.skus),
+        validation: null,
+      };
+    });
+
+    return result;
+  }, [updateMetrics]);
+
+  const swapInstancePositions = useCallback((sourceId: string, targetId: string): ValidationResult => {
+    let result: ValidationResult = { valid: false, violations: [] };
+
+    setState(prev => {
+      if (!prev.truck || sourceId === targetId) return prev;
+
+      const source = prev.instances.find(i => i.id === sourceId);
+      const target = prev.instances.find(i => i.id === targetId);
+      if (!source || !target) return prev;
+
+      const sourceUpdated = { ...source, position: target.position };
+      const targetUpdated = { ...target, position: source.position };
+      const sourceSku = prev.skus.get(source.skuId);
+      const targetSku = prev.skus.get(target.skuId);
+      if (!sourceSku || !targetSku) return prev;
+
+      sourceUpdated.aabb = computeAABB(sourceSku, sourceUpdated.position, sourceUpdated.yaw);
+      targetUpdated.aabb = computeAABB(targetSku, targetUpdated.position, targetUpdated.yaw);
+
+      const others = prev.instances.filter(i => i.id !== sourceId && i.id !== targetId);
+      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(others, prev.skus);
+
+      const v1 = validatePlacement(sourceUpdated, {
+        truck: prev.truck,
+        skus: prev.skus,
+        instances: others,
+        supportGraph,
+        skuWeights,
+        spatialIndex,
+      });
+      if (!v1.valid) {
+        result = v1;
+        return { ...prev, validation: v1 };
+      }
+
+      supportGraph.addInstance(sourceUpdated, [...others, sourceUpdated]);
+      spatialIndex.add(sourceUpdated.id, sourceUpdated.aabb);
+
+      const v2 = validatePlacement(targetUpdated, {
+        truck: prev.truck,
+        skus: prev.skus,
+        instances: [...others, sourceUpdated],
+        supportGraph,
+        skuWeights,
+        spatialIndex,
+      });
+      if (!v2.valid) {
+        result = v2;
+        return { ...prev, validation: v2 };
+      }
+
+      result = { valid: true, violations: [] };
+      const newInstances = prev.instances.map(i => {
+        if (i.id === sourceId) return sourceUpdated;
+        if (i.id === targetId) return targetUpdated;
+        return i;
+      });
+
+      return {
+        ...prev,
+        instances: newInstances,
+        metrics: updateMetrics(newInstances, prev.truck, prev.skus),
+        validation: null,
+      };
+    });
+
+    return result;
+  }, [updateMetrics]);
 
   const removeCase = useCallback((instanceId: string) => {
     setState(prev => {
-      if (!prev.truck || !supportGraph) return prev;
-
+      if (!prev.truck) return prev;
       const newInstances = prev.instances.filter(i => i.id !== instanceId);
-      supportGraph.removeInstance(instanceId);
-      spatialIndex.remove(instanceId);
-
       return {
         ...prev,
         instances: newInstances,
@@ -311,23 +411,22 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         selectedInstanceId: prev.selectedInstanceId === instanceId ? null : prev.selectedInstanceId,
       };
     });
-  }, [supportGraph, updateMetrics]);
+  }, [updateMetrics]);
 
   const runAutoPack = useCallback((skuQuantities: Map<string, number>) => {
     setState(prev => {
       if (!prev.truck) return prev;
-
       const skus = Array.from(prev.skus.values());
       const result = autoPack(prev.truck, skus, skuQuantities);
+      const placed = result.placed.map(inst => ({ ...inst, tilt: { x: 0, y: 0 } }));
 
       return {
         ...prev,
-        instances: result.placed,
+        instances: placed,
         metrics: result.metrics,
         validation: result.unplaced.length > 0
           ? {
               valid: false,
-              // Show the actual top rejection reason(s) instead of a hardcoded OUT_OF_BOUNDS
               violations: (Object.entries(result.reasonSummary)
                 .sort((a, b) => b[1] - a[1])
                 .map(([k]) => k)) as ValidationError[],
@@ -356,9 +455,6 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     const currentState = state;
     if (!currentState.truck) return;
 
-    const metrics = currentState.metrics;
-
-    // Look up the truck's UUID in Supabase
     const { data: truckRow, error: truckError } = await supabase
       .from('trucks')
       .select('id')
@@ -380,14 +476,15 @@ export function usePlanner(): [PlannerState, PlannerActions] {
           skuId: inst.skuId,
           position: inst.position,
           yaw: inst.yaw,
+          tilt: inst.tilt ?? { x: 0, y: 0 },
         })),
-        total_weight_kg: metrics?.totalWeightKg ?? 0,
-        front_axle_kg: metrics?.frontAxleKg ?? 0,
-        rear_axle_kg: metrics?.rearAxleKg ?? 0,
-        left_weight_kg: metrics?.leftWeightKg ?? 0,
-        right_weight_kg: metrics?.rightWeightKg ?? 0,
-        lr_imbalance_percent: metrics?.lrImbalancePercent ?? 0,
-        max_stack_height_mm: metrics?.maxStackHeightMm ?? 0,
+        total_weight_kg: currentState.metrics?.totalWeightKg ?? 0,
+        front_axle_kg: currentState.metrics?.frontAxleKg ?? 0,
+        rear_axle_kg: currentState.metrics?.rearAxleKg ?? 0,
+        left_weight_kg: currentState.metrics?.leftWeightKg ?? 0,
+        right_weight_kg: currentState.metrics?.rightWeightKg ?? 0,
+        lr_imbalance_percent: currentState.metrics?.lrImbalancePercent ?? 0,
+        max_stack_height_mm: currentState.metrics?.maxStackHeightMm ?? 0,
         status: 'validated',
       });
 
@@ -415,44 +512,28 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       const truck = prev.trucks.find(t => t.truckId === truckId);
       if (!truck) return { ...prev, error: 'Truck not found for this plan' };
 
-      // Reconstruct instances from saved data
       const savedInstances = plan.instances as Array<{
         id: string;
         skuId: string;
         position: { x: number; y: number; z: number };
         yaw: Yaw;
+        tilt?: { x: number; y: number };
       }>;
 
       const instances: CaseInstance[] = savedInstances.map(saved => {
         const sku = prev.skus.get(saved.skuId);
         if (!sku) {
-          throw new Error(
-            `Failed to load plan: SKU ${saved.skuId} for instance ${saved.id} is not in current catalog. ` +
-            `The plan may have been created with different SKUs.`
-          );
+          throw new Error(`Failed to load plan: SKU ${saved.skuId} is not in current catalog.`);
         }
         return {
           id: saved.id,
           skuId: saved.skuId,
           position: saved.position,
           yaw: saved.yaw,
+          tilt: saved.tilt ?? { x: 0, y: 0 },
           aabb: computeAABB(sku, saved.position, saved.yaw),
         };
       });
-
-      // Rebuild support graph and spatial index
-      const skuWeights = new Map<string, number>();
-      prev.skus.forEach((sku, id) => {
-        skuWeights.set(id, sku.weightKg);
-      });
-      const graph = new SupportGraph(skuWeights);
-      const idx = new SpatialIndex();
-      for (const inst of instances) {
-        graph.addInstance(inst, instances);
-        idx.add(inst.id, inst.aabb);
-      }
-      setSupportGraph(graph);
-      setSpatialIndex(idx);
 
       return {
         ...prev,
@@ -483,15 +564,91 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     }));
   }, []);
 
+  const createTruck = useCallback(async (input: CreateTruckInput) => {
+    const { error } = await supabase.from('trucks').insert({
+      truck_id: input.truckId,
+      name: input.name,
+      inner_length_mm: input.innerDims.x,
+      inner_width_mm: input.innerDims.y,
+      inner_height_mm: input.innerDims.z,
+      empty_weight_kg: input.emptyWeightKg,
+      axle_front_x_mm: input.axle.frontX,
+      axle_rear_x_mm: input.axle.rearX,
+      axle_max_front_kg: input.axle.maxFrontKg,
+      axle_max_rear_kg: input.axle.maxRearKg,
+      max_lr_imbalance_percent: input.maxLeftRightPercentDiff,
+      obstacles: [],
+    });
+
+    if (error) throw error;
+
+    setState(prev => {
+      const truck: TruckType = {
+        truckId: input.truckId,
+        name: input.name,
+        innerDims: input.innerDims,
+        emptyWeightKg: input.emptyWeightKg,
+        axle: input.axle,
+        balance: { maxLeftRightPercentDiff: input.maxLeftRightPercentDiff },
+        obstacles: [],
+      };
+      return { ...prev, trucks: [truck, ...prev.trucks] };
+    });
+  }, []);
+
+  const createCase = useCallback(async (input: CreateCaseInput) => {
+    const { error } = await supabase.from('case_skus').insert({
+      sku_id: input.skuId,
+      name: input.name,
+      length_mm: input.dims.l,
+      width_mm: input.dims.w,
+      height_mm: input.dims.h,
+      weight_kg: input.weightKg,
+      upright_only: input.uprightOnly,
+      allowed_yaw: input.allowedYaw,
+      can_be_base: input.canBeBase,
+      top_contact_allowed: input.topContactAllowed,
+      max_load_above_kg: input.maxLoadAboveKg,
+      min_support_ratio: input.minSupportRatio,
+      stack_class: input.stackClass || null,
+    });
+
+    if (error) throw error;
+
+    setState(prev => {
+      const created: CaseSKU = {
+        skuId: input.skuId,
+        name: input.name,
+        dims: input.dims,
+        weightKg: input.weightKg,
+        uprightOnly: input.uprightOnly,
+        allowedYaw: input.allowedYaw,
+        canBeBase: input.canBeBase,
+        topContactAllowed: input.topContactAllowed,
+        maxLoadAboveKg: input.maxLoadAboveKg,
+        minSupportRatio: input.minSupportRatio,
+        stackClass: input.stackClass,
+      };
+      const cases = [created, ...prev.cases];
+      const skus = new Map(prev.skus);
+      skus.set(created.skuId, created);
+      return { ...prev, cases, skus };
+    });
+  }, []);
+
   return [state, {
     setTruck,
     placeCase,
     removeCase,
+    updateInstance,
+    swapInstancePositions,
     runAutoPack,
     clearAll,
     selectInstance,
     savePlan,
     loadPlan,
     listPlans,
+    createTruck,
+    createCase,
   }];
 }
