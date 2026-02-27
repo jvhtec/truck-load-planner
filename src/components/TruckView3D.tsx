@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, PerspectiveCamera } from '@react-three/drei';
 import { Suspense, useMemo, useState, useEffect } from 'react';
+import { BoxGeometry } from 'three';
 import type { CaseInstance, TruckType } from '../core/types';
 
 interface TruckView3DProps {
@@ -43,21 +44,22 @@ export function TruckView3D({ truck, instances, selectedId, onSelect }: TruckVie
     <div className="truck-view-3d">
       <Canvas shadows onError={() => setError('3D rendering error')}>
         <PerspectiveCamera makeDefault position={[15, 12, 15]} fov={50} />
-        <OrbitControls 
+        <OrbitControls
           target={[truck.innerDims.x / 2000, truck.innerDims.y / 2000, truck.innerDims.z / 2000]}
           enableDamping
           dampingFactor={0.05}
         />
-        
+
         <ambientLight intensity={0.4} />
         <directionalLight
           position={[10, 20, 10]}
           intensity={1}
           castShadow
-          shadow-mapSize={[2048, 2048]}
+          shadow-mapSize-width={2048}
+          shadow-mapSize-height={2048}
         />
-        
-        <Suspense fallback={<div style={{color: 'white', padding: '2rem'}}>Loading 3D...</div>}>
+
+        <Suspense fallback={null}>
           <Scene truck={truck} instances={instances} selectedId={selectedId} onSelect={onSelect} />
         </Suspense>
       </Canvas>
@@ -79,6 +81,11 @@ function Scene({ truck, instances, selectedId, onSelect }: {
     y: truck.innerDims.y * SCALE,
     z: truck.innerDims.z * SCALE,
   }), [truck]);
+
+  const truckGeometry = useMemo(
+    () => new BoxGeometry(truckDims.x, truckDims.z, truckDims.y),
+    [truckDims.x, truckDims.y, truckDims.z]
+  );
 
   const axleFront = truck.axle.frontX * SCALE;
   const axleRear = truck.axle.rearX * SCALE;
@@ -103,7 +110,7 @@ function Scene({ truck, instances, selectedId, onSelect }: {
       {/* Truck box (wireframe) */}
       <group position={[truckDims.x / 2, truckDims.z / 2, truckDims.y / 2]}>
         <lineSegments>
-          <edgesGeometry args={[new BoxGeometry(truckDims.x, truckDims.z, truckDims.y)]} />
+          <edgesGeometry args={[truckGeometry]} />
           <lineBasicMaterial color="#3b82f6" linewidth={2} />
         </lineSegments>
       </group>
@@ -143,13 +150,13 @@ function AxleMarker({ x, z }: { x: number; z: number; label: string; maxKg: numb
   );
 }
 
-function CaseMesh({ 
-  instance, 
-  scale, 
-  isSelected, 
-  onClick 
-}: { 
-  instance: CaseInstance; 
+function CaseMesh({
+  instance,
+  scale,
+  isSelected,
+  onClick
+}: {
+  instance: CaseInstance;
   scale: number;
   isSelected: boolean;
   onClick: () => void;
@@ -166,26 +173,29 @@ function CaseMesh({
     (instance.aabb.max.y - instance.aabb.min.y) * scale,
   ];
 
+  const caseGeometry = useMemo(
+    () => new BoxGeometry(...size),
+    [size[0], size[1], size[2]]
+  );
+
   const color = isSelected ? '#22c55e' : '#6366f1';
 
   return (
     <mesh position={position} onClick={onClick} castShadow receiveShadow>
       <boxGeometry args={size} />
-      <meshStandardMaterial 
-        color={color} 
-        transparent 
+      <meshStandardMaterial
+        color={color}
+        transparent
         opacity={isSelected ? 0.9 : 0.7}
         emissive={isSelected ? '#22c55e' : '#000000'}
         emissiveIntensity={isSelected ? 0.3 : 0}
       />
       {isSelected && (
         <lineSegments>
-          <edgesGeometry args={[new BoxGeometry(...size)]} />
+          <edgesGeometry args={[caseGeometry]} />
           <lineBasicMaterial color="#22c55e" linewidth={2} />
         </lineSegments>
       )}
     </mesh>
   );
 }
-
-import { BoxGeometry } from 'three';
