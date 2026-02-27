@@ -15,9 +15,10 @@ cd truck-load-planner
 # Install
 npm install
 
-# Configure Supabase
+# Configure environment
 cp .env.example .env
 # Edit .env and add your SUPABASE_ANON_KEY
+# Optional for subpath deploys (GitHub Pages, etc.): set VITE_BASE_PATH=/truck-load-planner/
 
 # Run
 npm run dev
