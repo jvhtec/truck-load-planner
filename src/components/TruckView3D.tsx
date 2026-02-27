@@ -41,7 +41,7 @@ export function TruckView3D({ truck, instances, selectedId, onSelect }: TruckVie
 
   return (
     <div className="truck-view-3d">
-      <Canvas shadows onError={(e) => setError(`3D Error: ${e.message}`)}>
+      <Canvas shadows onError={(e) => setError('3D rendering error')}>
         <PerspectiveCamera makeDefault position={[15, 12, 15]} fov={50} />
         <OrbitControls 
           target={[truck.innerDims.x / 2000, truck.innerDims.y / 2000, truck.innerDims.z / 2000]}
