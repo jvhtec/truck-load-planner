@@ -1,14 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { TruckView3D } from './components/TruckView3D';
 import { TruckSelector } from './components/TruckSelector';
 import { CaseCatalog } from './components/CaseCatalog';
 import { MetricsPanel } from './components/MetricsPanel';
 import { usePlanner } from './hooks/usePlanner';
+import type { SavedPlan } from './hooks/usePlanner';
 import './App.css';
 
 function App() {
   const [state, actions] = usePlanner();
   const [autoPackQuantities, setAutoPackQuantities] = useState<Record<string, number>>({});
+  const [planName, setPlanName] = useState('');
+  const [savedPlans, setSavedPlans] = useState<SavedPlan[]>([]);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [showLoadDialog, setShowLoadDialog] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (showLoadDialog) {
+      actions.listPlans().then(setSavedPlans);
+    }
+  }, [showLoadDialog, actions]);
 
   if (state.loading) {
     return (
@@ -29,15 +41,24 @@ function App() {
     );
   }
 
+  const selectedInstance = state.instances.find(i => i.id === state.selectedInstanceId);
+  const selectedSku = selectedInstance ? state.skus.get(selectedInstance.skuId) : null;
+
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🚛 Truck Load Planner</h1>
+        <h1>Truck Load Planner</h1>
         <div className="header-actions">
+          <button onClick={() => setShowSaveDialog(true)} disabled={!state.truck || state.instances.length === 0}>
+            Save Plan
+          </button>
+          <button onClick={() => setShowLoadDialog(true)}>
+            Load Plan
+          </button>
           <button onClick={() => actions.clearAll()} disabled={state.instances.length === 0}>
             Clear All
           </button>
-          <button 
+          <button
             onClick={() => {
               const qty = new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)]));
               actions.runAutoPack(qty);
@@ -56,11 +77,11 @@ function App() {
             selected={state.truck}
             onSelect={actions.setTruck}
           />
-          
+
           <div className="auto-pack-section">
             <h3>Auto Pack Quantities</h3>
             <div className="quantity-inputs">
-              {state.cases.slice(0, 5).map(c => (
+              {state.cases.map(c => (
                 <label key={c.skuId}>
                   <span>{c.name}</span>
                   <input
@@ -85,10 +106,10 @@ function App() {
             selectedId={state.selectedInstanceId}
             onSelect={actions.selectInstance}
           />
-          
+
           {state.validation && !state.validation.valid && (
             <div className="validation-error">
-              <h4>⚠️ Cannot Place</h4>
+              <h4>Cannot Place</h4>
               <ul>
                 {state.validation.violations.map((v, i) => (
                   <li key={i}>{v}</li>
@@ -111,16 +132,23 @@ function App() {
               }
             }}
           />
-          
+
           <MetricsPanel
             metrics={state.metrics}
             truck={state.truck}
           />
-          
-          {state.selectedInstanceId && (
+
+          {selectedInstance && (
             <div className="selected-instance">
               <h4>Selected Case</h4>
-              <p>ID: {state.selectedInstanceId}</p>
+              {selectedSku && <p className="selected-name">{selectedSku.name}</p>}
+              <div className="selected-details">
+                <span>ID: {selectedInstance.id}</span>
+                <span>Position: ({selectedInstance.position.x}, {selectedInstance.position.y}, {selectedInstance.position.z}) mm</span>
+                <span>Yaw: {selectedInstance.yaw}&deg;</span>
+                {selectedSku && <span>Weight: {selectedSku.weightKg} kg</span>}
+                {selectedSku && <span>Dims: {selectedSku.dims.l}&times;{selectedSku.dims.w}&times;{selectedSku.dims.h} mm</span>}
+              </div>
               <button onClick={() => actions.removeCase(state.selectedInstanceId!)}>
                 Remove
               </button>
@@ -128,6 +156,74 @@ function App() {
           )}
         </aside>
       </main>
+
+      {/* Save Plan Dialog */}
+      {showSaveDialog && (
+        <div className="dialog-overlay" onClick={() => setShowSaveDialog(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Save Load Plan</h3>
+            <input
+              type="text"
+              placeholder="Plan name..."
+              value={planName}
+              onChange={(e) => setPlanName(e.target.value)}
+              autoFocus
+            />
+            <div className="dialog-actions">
+              <button onClick={() => setShowSaveDialog(false)}>Cancel</button>
+              <button
+                className="primary"
+                disabled={!planName.trim() || saving}
+                onClick={async () => {
+                  setSaving(true);
+                  await actions.savePlan(planName.trim());
+                  setSaving(false);
+                  setPlanName('');
+                  setShowSaveDialog(false);
+                }}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Load Plan Dialog */}
+      {showLoadDialog && (
+        <div className="dialog-overlay" onClick={() => setShowLoadDialog(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Load Plan</h3>
+            {savedPlans.length === 0 ? (
+              <p className="empty-message">No saved plans</p>
+            ) : (
+              <div className="plan-list">
+                {savedPlans.map(plan => (
+                  <button
+                    key={plan.id}
+                    className="plan-card"
+                    onClick={async () => {
+                      await actions.loadPlan(plan.id);
+                      setShowLoadDialog(false);
+                    }}
+                  >
+                    <div className="plan-name">{plan.name}</div>
+                    <div className="plan-meta">
+                      {plan.totalWeightKg?.toFixed(0) ?? 0} kg | {plan.status}
+                    </div>
+                    <div className="plan-date">
+                      {new Date(plan.createdAt).toLocaleDateString()}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="dialog-actions">
+              <button onClick={() => setShowLoadDialog(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

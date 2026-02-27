@@ -51,30 +51,37 @@ npm run dev
 
 ```
 src/
-├── core/           # Zero-rendering engine logic
-│   ├── types.ts    # Data models
-│   ├── geometry.ts # AABB, collision
-│   ├── validate.ts # Single validation entry
-│   ├── support.ts  # Support graph
-│   ├── weight.ts   # Axle & balance
-│   └── autopack.ts # Auto-pack engine
+├── core/                  # Zero-rendering engine logic
+│   ├── types.ts           # Data models
+│   ├── geometry.ts        # AABB, collision, support area
+│   ├── validate.ts        # Single validation entry point
+│   ├── support.ts         # Support graph & load propagation
+│   ├── weight.ts          # Axle load & balance calculations
+│   ├── spatial.ts         # Uniform-grid spatial index (O(1) collision queries)
+│   ├── autopack.ts        # Auto-pack engine (multi-start, axle-aware scoring)
+│   ├── index.ts           # Core exports
+│   └── __tests__/         # Vitest unit tests (60 tests)
 ├── hooks/
-│   └── usePlanner.ts # React state management
-├── components/     # React UI
+│   └── usePlanner.ts      # React state management (place, remove, save, load)
+├── components/            # React UI components
+│   ├── TruckView3D.tsx    # 3D visualization (React Three Fiber)
+│   ├── TruckSelector.tsx  # Truck picker
+│   ├── CaseCatalog.tsx    # Case browser & manual placement controls
+│   └── MetricsPanel.tsx   # Load metrics & warnings display
 ├── lib/
-│   └── supabase.ts # Database client
-└── App.tsx
+│   └── supabase.ts        # Database client
+└── App.tsx                # Root: layout, save/load dialogs, auto-pack controls
 ```
 
 ## Phase Progress
 
 - [x] Phase 1: Core engine + validation
-- [ ] Phase 2: Manual UI
-- [ ] Phase 3: Support/load graph
-- [ ] Phase 4: Axle + balance integration
-- [ ] Phase 5: Auto-pack v1
-- [ ] Phase 6: Performance hardening
-- [ ] Phase 7: Stress testing
+- [x] Phase 2: Manual UI — truck/case selection, manual placement, save/load plans, selected-case inspector
+- [x] Phase 3: Support/load graph — topological load propagation, per-instance cumulative load tracking
+- [x] Phase 4: Axle + balance integration — beam-model axle load, L/R balance, all checks in single validator
+- [x] Phase 5: Auto-pack v1 — multi-start, tier-shuffled ordering, axle-aware placement scoring, reason tracking
+- [x] Phase 6: Performance hardening — `SpatialIndex` (uniform grid) for O(1) avg collision queries, anchor pre-filtering
+- [x] Phase 7: Stress testing — 60 vitest tests covering geometry, weight, support graph, validator, auto-pack, spatial index
 
 ## Scripts
 

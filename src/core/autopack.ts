@@ -3,26 +3,27 @@
  * Safe-first, constraint-driven placement
  */
 
-import type { 
-  TruckType, 
-  CaseSKU, 
-  CaseInstance, 
+import type {
+  TruckType,
+  CaseSKU,
+  CaseInstance,
   AutoPackResult,
   ValidationError,
 } from './types';
 import { createInstance, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
 import { SupportGraph } from './support';
-import { computeMetrics } from './weight';
+import { SpatialIndex } from './spatial';
+import { computeMetrics, computeAxleLoads, computeCOM } from './weight';
 
 // ============================================================================
 // Auto-Pack Configuration
 // ============================================================================
 
 export interface AutoPackConfig {
-  maxAttempts: number;          // multi-start attempts
-  randomSeed?: number;          // for reproducibility
-  
+  maxAttempts: number;         // multi-start attempts
+  randomSeed?: number;         // for reproducibility
+
   // Scoring weights
   scoreWeights: {
     stackHeight: number;
@@ -55,26 +56,31 @@ export function autoPack(
   config: Partial<AutoPackConfig> = {}
 ): AutoPackResult {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  
+
   // Build ordered list of cases to place
   const casesToPlace = buildPlacementQueue(skus, skuQuantities);
-  
+
+  if (casesToPlace.length === 0) return createEmptyResult();
+
   let bestResult: AutoPackResult | null = null;
   let bestScore = -Infinity;
-  
-  // Multi-start
+
+  // Multi-start: attempt 0 is always the default ordering, rest shuffle within tiers
   for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
     const result = attemptPlacement(truck, skus, casesToPlace, attempt);
-    
-    if (result.placed.length > (bestResult?.placed.length || 0)) {
+
+    // Primary: maximize placed count; secondary: score quality
+    const placed = result.placed.length;
+    const best = bestResult?.placed.length ?? -1;
+    if (placed >= best) {
       const score = scoreResult(result, truck, cfg.scoreWeights);
-      if (score > bestScore) {
+      if (placed > best || score > bestScore) {
         bestScore = score;
         bestResult = result;
       }
     }
   }
-  
+
   return bestResult || createEmptyResult();
 }
 
@@ -91,37 +97,46 @@ function attemptPlacement(
   const skuMap = new Map(skus.map(s => [s.skuId, s]));
   const skuWeights = new Map(skus.map(s => [s.skuId, s.weightKg]));
   const supportGraph = new SupportGraph(skuWeights);
-  
+  const spatialIndex = new SpatialIndex();
+
   const ctx: ValidatorContext = {
     truck,
     skus: skuMap,
     instances: [],
     supportGraph,
     skuWeights,
+    spatialIndex,
   };
-  
+
   const placed: CaseInstance[] = [];
   const unplaced: string[] = [];
-  const reasonSummary: Record<ValidationError, number> = {} as any;
-  
-  // Candidate anchor points
+  const reasonSummary: Record<string, number> = {};
+
+  // Candidate anchor points — start from front-left-floor corner
   let anchors: Vec3[] = [{ x: 0, y: 0, z: 0 }];
-  
-  // Shuffle cases within same priority tier
+
+  // Shuffle cases within same priority tier for multi-start diversity
   const shuffled = shuffleWithinTiers(casesToPlace, attemptNumber);
-  
+
   for (const pc of shuffled) {
     const sku = skuMap.get(pc.skuId);
     if (!sku) {
       unplaced.push(pc.skuId);
       continue;
     }
-    
+
     let bestPlacement: { instance: CaseInstance; score: number } | null = null;
-    
-    // Try each anchor point
-    for (const anchor of anchors) {
-      // Try each allowed yaw
+    const lastViolations: ValidationError[] = [];
+
+    // Filter obviously out-of-bounds anchors early
+    const candidateAnchors = anchors.filter(a =>
+      a.x < truck.innerDims.x &&
+      a.y < truck.innerDims.y &&
+      a.z < truck.innerDims.z
+    );
+
+    // Try each anchor × each allowed yaw
+    for (const anchor of candidateAnchors) {
       for (const yaw of sku.allowedYaw) {
         const instance = createInstance(
           `${pc.skuId}-${placed.length}`,
@@ -129,39 +144,46 @@ function attemptPlacement(
           anchor,
           yaw
         );
-        
+
         const validation = validatePlacement(instance, ctx);
-        
+
         if (validation.valid) {
           const score = scorePlacement(instance, placed, truck, skuWeights);
           if (!bestPlacement || score > bestPlacement.score) {
             bestPlacement = { instance, score };
           }
+        } else {
+          for (const v of validation.violations) {
+            lastViolations.push(v);
+          }
         }
       }
     }
-    
+
     if (bestPlacement) {
       placed.push(bestPlacement.instance);
       ctx.instances = placed;
       supportGraph.addInstance(bestPlacement.instance, placed);
-      
-      // Generate new anchors
+      spatialIndex.add(bestPlacement.instance.id, bestPlacement.instance.aabb);
+
+      // Expand anchor set with positions adjacent to this placement
       anchors = updateAnchors(anchors, bestPlacement.instance, sku);
     } else {
       unplaced.push(pc.skuId);
-      // Track why it failed
-      // (simplified - would need to track last validation result)
+      // Tally the most common rejection reason for this case
+      for (const v of lastViolations) {
+        reasonSummary[v] = (reasonSummary[v] ?? 0) + 1;
+      }
     }
   }
-  
+
   const metrics = computeMetrics(placed, skuWeights, truck);
-  
+
   return {
     placed,
     unplaced,
     metrics,
-    reasonSummary,
+    reasonSummary: reasonSummary as Record<ValidationError, number>,
   };
 }
 
@@ -182,7 +204,7 @@ function buildPlacementQueue(
   quantities: Map<string, number>
 ): PlacementCase[] {
   const queue: PlacementCase[] = [];
-  
+
   for (const sku of skus) {
     const count = quantities.get(sku.skuId) || 0;
     for (let i = 0; i < count; i++) {
@@ -195,14 +217,14 @@ function buildPlacementQueue(
       });
     }
   }
-  
-  // Sort by priority
+
+  // Sort by placement priority
   return queue.sort((a, b) => {
-    // 1. Heaviest first
+    // 1. Heaviest first (floor-level dense base)
     if (a.weightKg !== b.weightKg) return b.weightKg - a.weightKg;
-    // 2. Non-stackable first
-    if (a.canBeBase !== b.canBeBase) return a.canBeBase ? 1 : -1;
-    // 3. Upright-only first
+    // 2. Good bases before fragile items
+    if (a.canBeBase !== b.canBeBase) return a.canBeBase ? -1 : 1;
+    // 3. Upright-only first (most constrained)
     if (a.uprightOnly !== b.uprightOnly) return a.uprightOnly ? -1 : 1;
     // 4. Largest footprint first
     return b.footprintMm2 - a.footprintMm2;
@@ -213,10 +235,11 @@ function shuffleWithinTiers(
   cases: PlacementCase[],
   seed: number
 ): PlacementCase[] {
-  // Group by tier (same priority)
+  if (seed === 0) return cases; // attempt 0 uses canonical order
+
   const tiers: PlacementCase[][] = [];
   let currentTier: PlacementCase[] = [];
-  
+
   for (let i = 0; i < cases.length; i++) {
     if (i > 0 && !sameTier(cases[i - 1], cases[i])) {
       if (currentTier.length > 0) tiers.push(currentTier);
@@ -225,19 +248,20 @@ function shuffleWithinTiers(
     currentTier.push(cases[i]);
   }
   if (currentTier.length > 0) tiers.push(currentTier);
-  
-  // Shuffle each tier
+
   const result: PlacementCase[] = [];
   for (const tier of tiers) {
     const shuffled = [...tier];
-    // Simple seeded shuffle
+    // Linear congruential seeded shuffle (deterministic)
+    let s = seed;
     for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = (seed * (i + 1)) % (i + 1);
+      s = (s * 1664525 + 1013904223) >>> 0;
+      const j = s % (i + 1);
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     result.push(...shuffled);
   }
-  
+
   return result;
 }
 
@@ -261,24 +285,27 @@ function updateAnchors(
   sku: CaseSKU
 ): Vec3[] {
   const newAnchors: Vec3[] = [...current];
-  
-  // Add corners of placed box
+
   const maxX = placed.aabb.max.x;
   const maxY = placed.aabb.max.y;
-  const maxZ = topZ(placed.aabb);
-  
-  // Right side
+  const topZVal = topZ(placed.aabb);
+
+  // Adjacent to right side (same row, next column)
   newAnchors.push({ x: placed.position.x, y: maxY, z: placed.position.z });
-  
-  // Front (behind)
+
+  // Adjacent behind (next row along length)
   newAnchors.push({ x: maxX, y: placed.position.y, z: placed.position.z });
-  
-  // On top (if stackable)
+
+  // Corner diagonal (next row + next column)
+  newAnchors.push({ x: maxX, y: maxY, z: placed.position.z });
+
+  // On top (if this case can be used as a base)
   if (sku.canBeBase) {
-    newAnchors.push({ x: placed.position.x, y: placed.position.y, z: maxZ });
+    newAnchors.push({ x: placed.position.x, y: placed.position.y, z: topZVal });
+    newAnchors.push({ x: placed.position.x, y: maxY, z: topZVal });
+    newAnchors.push({ x: maxX, y: placed.position.y, z: topZVal });
   }
-  
-  // Remove duplicates and out-of-bounds
+
   return deduplicateAnchors(newAnchors);
 }
 
@@ -293,41 +320,77 @@ function deduplicateAnchors(anchors: Vec3[]): Vec3[] {
 }
 
 // ============================================================================
-// Scoring
+// Placement Scoring
 // ============================================================================
 
 function scorePlacement(
-  _instance: CaseInstance,
-  _placed: CaseInstance[],
-  _truck: TruckType,
-  _skuWeights: Map<string, number>
+  instance: CaseInstance,
+  placed: CaseInstance[],
+  truck: TruckType,
+  skuWeights: Map<string, number>
 ): number {
-  // Prefer lower placements, toward the front
-  const heightScore = -_instance.aabb.min.z;
-  const frontScore = -_instance.aabb.min.x;
-  
-  return heightScore * 2 + frontScore;
+  // Prefer lower height (pack from floor up)
+  const heightPenalty = instance.aabb.min.z / truck.innerDims.z;
+
+  // Prefer placing toward front axle (front-heavy is usually better for smaller trucks)
+  const xCenter = (instance.aabb.min.x + instance.aabb.max.x) / 2;
+  const axleMidX = (truck.axle.frontX + truck.axle.rearX) / 2;
+  const axleProximity = Math.abs(xCenter - axleMidX) / truck.innerDims.x;
+
+  // Prefer placing toward Y center (minimize L/R imbalance)
+  const yCenter = (instance.aabb.min.y + instance.aabb.max.y) / 2;
+  const truckMidY = truck.innerDims.y / 2;
+  const yDeviationPenalty = Math.abs(yCenter - truckMidY) / truck.innerDims.y;
+
+  // Prefer tight compaction: reward when box touches existing boxes
+  let adjacencyBonus = 0;
+  if (placed.length > 0) {
+    const allWithCandidate = [...placed, instance];
+    const totalW = allWithCandidate.reduce((s, i) => s + (skuWeights.get(i.skuId) || 0), 0);
+    if (totalW > 0) {
+      const com = computeCOM(allWithCandidate, skuWeights);
+      const { frontKg, rearKg } = computeAxleLoads(totalW, com.x, truck);
+      const axleRatio = truck.axle.maxFrontKg + truck.axle.maxRearKg > 0
+        ? Math.abs(frontKg / truck.axle.maxFrontKg - rearKg / truck.axle.maxRearKg)
+        : 0;
+      adjacencyBonus = -axleRatio; // negative because lower is better
+    }
+  }
+
+  // Combined score (higher = better placement)
+  return (
+    -heightPenalty * 2.0
+    - axleProximity * 1.0
+    - yDeviationPenalty * 1.5
+    + adjacencyBonus * 2.0
+  );
 }
 
 function scoreResult(
   result: AutoPackResult,
-  _truck: TruckType,
+  truck: TruckType,
   weights: AutoPackConfig['scoreWeights']
 ): number {
-  let score = result.placed.length * 1000; // Primary: more placed = better
-  
-  // Penalize high stack height
-  score -= result.metrics.maxStackHeightMm * weights.stackHeight / 1000;
-  
-  // Penalize axle imbalance
-  const axleImbalance = Math.abs(
-    result.metrics.frontAxleKg - result.metrics.rearAxleKg
-  );
-  score -= axleImbalance * weights.axleBalance / 100;
-  
+  let score = result.placed.length * 1000; // Primary: maximize placed count
+
+  // Penalize high stack height (normalized by truck height)
+  score -= (result.metrics.maxStackHeightMm / truck.innerDims.z) * weights.stackHeight * 100;
+
+  // Penalize axle imbalance (as % of respective max loads)
+  const frontPct = truck.axle.maxFrontKg > 0
+    ? result.metrics.frontAxleKg / truck.axle.maxFrontKg
+    : 0;
+  const rearPct = truck.axle.maxRearKg > 0
+    ? result.metrics.rearAxleKg / truck.axle.maxRearKg
+    : 0;
+  score -= Math.abs(frontPct - rearPct) * weights.axleBalance * 50;
+
   // Penalize L/R imbalance
   score -= result.metrics.lrImbalancePercent * weights.lrBalance;
-  
+
+  // Reward compactness (fewer unplaced = better, already captured in placed count)
+  score -= result.unplaced.length * 500;
+
   return score;
 }
 
@@ -349,6 +412,6 @@ function createEmptyResult(): AutoPackResult {
       maxStackHeightMm: 0,
       warnings: [],
     },
-    reasonSummary: {} as any,
+    reasonSummary: {} as Record<ValidationError, number>,
   };
 }
