@@ -3,7 +3,6 @@
  */
 
 import type { Vec3, TruckType, CaseInstance, LoadMetrics } from './types';
-import { bottomArea, intersectionAreaXZ } from './geometry';
 
 // ============================================================================
 // Center of Mass

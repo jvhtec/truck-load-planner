@@ -162,14 +162,14 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   }, [supportGraph, updateMetrics]);
   
   const moveCase = useCallback((
-    instanceId: string,
-    newPosition: { x: number; y: number; z: number }
+    _instanceId: string,
+    _newPosition: { x: number; y: number; z: number }
   ): ValidationResult => {
     // TODO: Implement move validation
     return { valid: true, violations: [] };
   }, []);
   
-  const rotateCase = useCallback((instanceId: string, yaw: Yaw): ValidationResult => {
+  const rotateCase = useCallback((_instanceId: string, _yaw: Yaw): ValidationResult => {
     // TODO: Implement rotation validation
     return { valid: true, violations: [] };
   }, []);

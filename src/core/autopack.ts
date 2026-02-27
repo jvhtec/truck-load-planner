@@ -8,11 +8,9 @@ import type {
   CaseSKU, 
   CaseInstance, 
   AutoPackResult,
-  LoadMetrics,
   ValidationError,
-  Yaw,
 } from './types';
-import { createInstance, bottomZ, topZ } from './geometry';
+import { createInstance, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
 import { SupportGraph } from './support';
 import { computeMetrics } from './weight';
@@ -299,21 +297,21 @@ function deduplicateAnchors(anchors: Vec3[]): Vec3[] {
 // ============================================================================
 
 function scorePlacement(
-  instance: CaseInstance,
-  placed: CaseInstance[],
-  truck: TruckType,
-  skuWeights: Map<string, number>
+  _instance: CaseInstance,
+  _placed: CaseInstance[],
+  _truck: TruckType,
+  _skuWeights: Map<string, number>
 ): number {
   // Prefer lower placements, toward the front
-  const heightScore = -instance.aabb.min.z;
-  const frontScore = -instance.aabb.min.x;
+  const heightScore = -_instance.aabb.min.z;
+  const frontScore = -_instance.aabb.min.x;
   
   return heightScore * 2 + frontScore;
 }
 
 function scoreResult(
   result: AutoPackResult,
-  truck: TruckType,
+  _truck: TruckType,
   weights: AutoPackConfig['scoreWeights']
 ): number {
   let score = result.placed.length * 1000; // Primary: more placed = better

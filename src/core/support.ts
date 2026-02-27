@@ -2,7 +2,7 @@
  * Support graph for tracking case stacking relationships
  */
 
-import type { CaseInstance, CaseSKU } from './types';
+import type { CaseInstance } from './types';
 import { bottomZ, topZ, intersectionAreaXZ, bottomArea, isApproximately } from './geometry';
 
 const SUPPORT_EPSILON = 5; // 5mm tolerance for support detection
@@ -117,10 +117,12 @@ export class SupportGraph {
 
   private propagateLoad(instanceId: string): void {
     // Add this instance's weight to all supporters
-    // TODO: implement proper load propagation
+    // TODO: implement proper load propagation using this.skuWeights
+    void this.skuWeights; // Silence unused warning
+    void instanceId;
   }
 
-  private recalculateLoad(instanceId: string): void {
+  private recalculateLoad(_instanceId: string): void {
     // Recalculate cumulative load for this instance
     // TODO: implement
   }

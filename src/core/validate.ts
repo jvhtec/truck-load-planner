@@ -219,7 +219,7 @@ function calculateSupportRatio(
 function findSupporters(
   candidate: CaseInstance,
   instances: CaseInstance[],
-  skus: Map<string, CaseSKU>
+  _skus: Map<string, CaseSKU>
 ): CaseInstance[] {
   const supporters: CaseInstance[] = [];
   const candBottomZ = bottomZ(candidate.aabb);
