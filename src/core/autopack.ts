@@ -27,10 +27,8 @@ export interface AutoPackConfig {
   // Scoring weights
   scoreWeights: {
     stackHeight: number;
-    comHeight: number;
     axleBalance: number;
     lrBalance: number;
-    compaction: number;
   };
 }
 
@@ -38,10 +36,8 @@ const DEFAULT_CONFIG: AutoPackConfig = {
   maxAttempts: 100,
   scoreWeights: {
     stackHeight: 1.0,
-    comHeight: 0.5,
     axleBalance: 2.0,
     lrBalance: 1.5,
-    compaction: 0.3,
   },
 };
 
@@ -67,7 +63,9 @@ export function autoPack(
 
   // Multi-start: attempt 0 is always the default ordering, rest shuffle within tiers
   for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
-    const result = attemptPlacement(truck, skus, casesToPlace, attempt);
+    // Combine randomSeed (if provided) with attempt number for deterministic seeding
+    const seed = cfg.randomSeed !== undefined ? cfg.randomSeed + attempt : attempt;
+    const result = attemptPlacement(truck, skus, casesToPlace, seed);
 
     // Primary: maximize placed count; secondary: score quality
     const placed = result.placed.length;

@@ -209,14 +209,18 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   const updateMetrics = useCallback((instances: CaseInstance[], truck: TruckType | null, skus: Map<string, CaseSKU>) => {
     if (!truck) return null;
     const skuWeights = new Map<string, number>();
-    skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
+    skus.forEach((sku, id) => {
+      skuWeights.set(id, sku.weightKg);
+    });
     return computeMetrics(instances, skuWeights, truck);
   }, []);
 
   const setTruck = useCallback((truck: TruckType) => {
     const skuWeights = new Map<string, number>();
     setState(prev => {
-      prev.skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
+      prev.skus.forEach((sku, id) => {
+        skuWeights.set(id, sku.weightKg);
+      });
       const graph = new SupportGraph(skuWeights);
       setSupportGraph(graph);
       setSpatialIndex(new SpatialIndex());
@@ -257,7 +261,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       );
 
       const skuWeights = new Map<string, number>();
-      prev.skus.forEach((s, id) => skuWeights.set(id, s.weightKg));
+      prev.skus.forEach((s, id) => {
+        skuWeights.set(id, s.weightKg);
+      });
 
       const validation = validatePlacement(instance, {
         truck: prev.truck,
@@ -415,20 +421,26 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
       const instances: CaseInstance[] = savedInstances.map(saved => {
         const sku = prev.skus.get(saved.skuId);
+        if (!sku) {
+          throw new Error(
+            `Failed to load plan: SKU ${saved.skuId} for instance ${saved.id} is not in current catalog. ` +
+            `The plan may have been created with different SKUs.`
+          );
+        }
         return {
           id: saved.id,
           skuId: saved.skuId,
           position: saved.position,
           yaw: saved.yaw,
-          aabb: sku
-            ? computeAABB(sku, saved.position, saved.yaw)
-            : { min: saved.position, max: saved.position },
+          aabb: computeAABB(sku, saved.position, saved.yaw),
         };
       });
 
       // Rebuild support graph and spatial index
       const skuWeights = new Map<string, number>();
-      prev.skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
+      prev.skus.forEach((sku, id) => {
+        skuWeights.set(id, sku.weightKg);
+      });
       const graph = new SupportGraph(skuWeights);
       const idx = new SpatialIndex();
       for (const inst of instances) {

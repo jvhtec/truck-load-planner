@@ -55,7 +55,9 @@ function makeCtx(instances: ReturnType<typeof createInstance>[] = [], skuMap?: M
   const t = overrideTruck ?? truck;
   const skus = skuMap ?? new Map([['BASE', baseSku], ['FRAG', fragSku]]);
   const skuWeights = new Map<string, number>();
-  skus.forEach((s, id) => skuWeights.set(id, s.weightKg));
+  skus.forEach((s, id) => {
+    skuWeights.set(id, s.weightKg);
+  });
   const supportGraph = new SupportGraph(skuWeights);
   for (const inst of instances) {
     supportGraph.addInstance(inst, instances);

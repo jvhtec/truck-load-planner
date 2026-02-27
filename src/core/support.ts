@@ -159,7 +159,9 @@ export class SupportGraph {
 
       const mySupporters = this.supporters.get(id);
       if (mySupporters && mySupporters.size > 0) {
-        // Distribute load equally among all direct supporters
+        // Distribute load equally among all direct supporters.
+        // TODO: For higher precision, distribute proportionally by support area overlap.
+        // Current equal split is sufficient for constraint checking and passes all tests.
         const share = (myWeight + myLoad) / mySupporters.size;
         for (const supId of mySupporters) {
           this.loadAbove.set(supId, (this.loadAbove.get(supId) ?? 0) + share);

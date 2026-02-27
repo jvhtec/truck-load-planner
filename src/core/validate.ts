@@ -9,6 +9,7 @@ import type {
   CaseInstance,
   ValidationResult,
   ValidationError,
+  AABB,
 } from './types';
 import {
   aabbContains,
@@ -79,14 +80,12 @@ export function validatePlacement(
 
   // 3. Collision with other instances
   // Use spatial index when available to avoid full O(n) scan
-  const collidables: Iterable<string | CaseInstance> = ctx.spatialIndex
-    ? ctx.spatialIndex.candidates(candidate.aabb)
-    : ctx.instances;
-
   if (ctx.spatialIndex) {
-    for (const otherId of collidables as Set<string>) {
+    // Build instance lookup map for O(1) access
+    const instancesById = new Map(ctx.instances.map(i => [i.id, i]));
+    for (const otherId of ctx.spatialIndex.candidates(candidate.aabb)) {
       if (otherId === candidate.id) continue;
-      const other = ctx.instances.find(i => i.id === otherId);
+      const other = instancesById.get(otherId);
       if (other && aabbOverlap(candidate.aabb, other.aabb)) {
         violations.push('COLLISION');
         details.collision = { with: other.id };
@@ -209,11 +208,6 @@ export function validatePlacement(
 // ============================================================================
 // Helpers
 // ============================================================================
-
-interface AABB {
-  min: { x: number; y: number; z: number };
-  max: { x: number; y: number; z: number };
-}
 
 function calculateSupportRatio(
   candidate: CaseInstance,

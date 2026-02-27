@@ -18,9 +18,11 @@ function App() {
 
   useEffect(() => {
     if (showLoadDialog) {
-      actions.listPlans().then(setSavedPlans);
+      actions.listPlans()
+        .then(setSavedPlans)
+        .catch(err => console.error('Failed to load plans:', err));
     }
-  }, [showLoadDialog, actions]);
+  }, [showLoadDialog]);
 
   if (state.loading) {
     return (
@@ -160,8 +162,16 @@ function App() {
       {/* Save Plan Dialog */}
       {showSaveDialog && (
         <div className="dialog-overlay" onClick={() => setShowSaveDialog(false)}>
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>Save Load Plan</h3>
+          <div
+            className="dialog"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setShowSaveDialog(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="save-dialog-title"
+            tabIndex={-1}
+          >
+            <h3 id="save-dialog-title">Save Load Plan</h3>
             <input
               type="text"
               placeholder="Plan name..."
@@ -176,10 +186,16 @@ function App() {
                 disabled={!planName.trim() || saving}
                 onClick={async () => {
                   setSaving(true);
-                  await actions.savePlan(planName.trim());
-                  setSaving(false);
-                  setPlanName('');
-                  setShowSaveDialog(false);
+                  try {
+                    await actions.savePlan(planName.trim());
+                  } catch (err) {
+                    console.error('Failed to save plan:', err);
+                    alert('Failed to save plan. Please try again.');
+                  } finally {
+                    setSaving(false);
+                    setPlanName('');
+                    setShowSaveDialog(false);
+                  }
                 }}
               >
                 {saving ? 'Saving...' : 'Save'}
@@ -192,8 +208,16 @@ function App() {
       {/* Load Plan Dialog */}
       {showLoadDialog && (
         <div className="dialog-overlay" onClick={() => setShowLoadDialog(false)}>
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>Load Plan</h3>
+          <div
+            className="dialog"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setShowLoadDialog(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="load-dialog-title"
+            tabIndex={-1}
+          >
+            <h3 id="load-dialog-title">Load Plan</h3>
             {savedPlans.length === 0 ? (
               <p className="empty-message">No saved plans</p>
             ) : (
@@ -203,8 +227,14 @@ function App() {
                     key={plan.id}
                     className="plan-card"
                     onClick={async () => {
-                      await actions.loadPlan(plan.id);
-                      setShowLoadDialog(false);
+                      try {
+                        await actions.loadPlan(plan.id);
+                      } catch (err) {
+                        console.error('Failed to load plan:', err);
+                        alert('Failed to load plan. Please try again.');
+                      } finally {
+                        setShowLoadDialog(false);
+                      }
                     }}
                   >
                     <div className="plan-name">{plan.name}</div>

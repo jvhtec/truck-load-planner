@@ -585,8 +585,7 @@ body {
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;
   padding: 1.5rem;
-  min-width: 360px;
-  max-width: 480px;
+  width: clamp(280px, 90vw, 480px);
   max-height: 80vh;
   overflow-y: auto;
 }
