@@ -12,14 +12,17 @@ const SUPPORT_EPSILON = 5; // 5mm tolerance for support detection
 // ============================================================================
 
 export class SupportGraph {
-  // Map from instance id -> set of supporter instance ids
+  // Map from instance id -> set of supporter instance ids (instances directly below)
   private supporters: Map<string, Set<string>> = new Map();
-  
+
   // Map from instance id -> cumulative load above (kg)
   private loadAbove: Map<string, number> = new Map();
-  
-  // SKU weights for load calculation
+
+  // SKU weights for load calculation (skuId -> weightKg)
   private skuWeights: Map<string, number> = new Map();
+
+  // Track instance id -> skuId so we can look up weights without parsing IDs
+  private instanceSkuId: Map<string, string> = new Map();
 
   constructor(skuWeights: Map<string, number>) {
     this.skuWeights = skuWeights;
@@ -32,19 +35,20 @@ export class SupportGraph {
   addInstance(instance: CaseInstance, allInstances: CaseInstance[]): void {
     this.supporters.set(instance.id, new Set());
     this.loadAbove.set(instance.id, 0);
-    
-    // Find supporters
+    this.instanceSkuId.set(instance.id, instance.skuId);
+
+    // Find supporters directly below this instance
     const instBottomZ = bottomZ(instance.aabb);
-    
-    if (instBottomZ > 0) {
+
+    if (instBottomZ > SUPPORT_EPSILON) {
       for (const other of allInstances) {
         if (other.id === instance.id) continue;
-        
+
         const otherTopZ = topZ(other.aabb);
-        
-        // Check if other is directly below
+
+        // Check if other is directly below (within epsilon)
         if (isApproximately(otherTopZ, instBottomZ, SUPPORT_EPSILON)) {
-          // Check X-Y overlap
+          // Check X-Y footprint overlap
           const overlapArea = intersectionAreaXZ(instance.aabb, other.aabb);
           if (overlapArea > 0) {
             this.supporters.get(instance.id)!.add(other.id);
@@ -52,22 +56,23 @@ export class SupportGraph {
         }
       }
     }
-    
-    // Update load propagation for instances above
-    this.propagateLoad(instance.id);
+
+    // Recompute all loads after adding this instance
+    this.recomputeAllLoads();
   }
 
   removeInstance(instanceId: string): void {
-    // Find all instances that this one supports
-    const dependents = this.findDependents(instanceId);
-    
     this.supporters.delete(instanceId);
     this.loadAbove.delete(instanceId);
-    
-    // Recalculate loads for dependents
-    for (const depId of dependents) {
-      this.recalculateLoad(depId);
+    this.instanceSkuId.delete(instanceId);
+
+    // Remove this instance from all supporter sets
+    for (const supporterSet of this.supporters.values()) {
+      supporterSet.delete(instanceId);
     }
+
+    // Recompute all loads after removal
+    this.recomputeAllLoads();
   }
 
   // ---------------------------------------------------------------------------
@@ -87,27 +92,27 @@ export class SupportGraph {
     allInstances: CaseInstance[]
   ): number {
     const instBottomZ = bottomZ(instance.aabb);
-    
+
     if (instBottomZ <= SUPPORT_EPSILON) {
-      // On floor - full support
+      // On floor — full support
       return 1.0;
     }
-    
+
     const instBottomArea = bottomArea(instance.aabb);
     if (instBottomArea === 0) return 0;
-    
+
     let supportedArea = 0;
-    
+
     for (const other of allInstances) {
       if (other.id === instance.id) continue;
-      
+
       const otherTopZ = topZ(other.aabb);
-      
+
       if (isApproximately(otherTopZ, instBottomZ, SUPPORT_EPSILON)) {
         supportedArea += intersectionAreaXZ(instance.aabb, other.aabb);
       }
     }
-    
+
     return supportedArea / instBottomArea;
   }
 
@@ -115,27 +120,76 @@ export class SupportGraph {
   // Internal
   // ---------------------------------------------------------------------------
 
-  private propagateLoad(instanceId: string): void {
-    // Add this instance's weight to all supporters
-    // TODO: implement proper load propagation using this.skuWeights
-    void this.skuWeights; // Silence unused warning
-    void instanceId;
+  private recomputeAllLoads(): void {
+    // Reset all cumulative loads
+    for (const id of this.loadAbove.keys()) {
+      this.loadAbove.set(id, 0);
+    }
+
+    const allIds = Array.from(this.supporters.keys());
+    if (allIds.length === 0) return;
+
+    // Build reverse map: dependentsMap[id] = list of instances that sit ON TOP of id
+    const dependentsMap = new Map<string, string[]>();
+    for (const id of allIds) {
+      dependentsMap.set(id, []);
+    }
+    for (const [id, sups] of this.supporters) {
+      for (const supId of sups) {
+        dependentsMap.get(supId)?.push(id);
+      }
+    }
+
+    // Topological sort: start from instances with nothing on top (leaves)
+    const inDegree = new Map<string, number>();
+    for (const id of allIds) {
+      inDegree.set(id, dependentsMap.get(id)?.length ?? 0);
+    }
+
+    const queue: string[] = [];
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) queue.push(id);
+    }
+
+    // Process top-to-bottom: propagate (weight + loadAbove) downward to supporters
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const myWeight = this.getInstanceWeight(id);
+      const myLoad = this.loadAbove.get(id) ?? 0;
+
+      const mySupporters = this.supporters.get(id);
+      if (mySupporters && mySupporters.size > 0) {
+        // Distribute load equally among all direct supporters.
+        // TODO: For higher precision, distribute proportionally by support area overlap.
+        // Current equal split is sufficient for constraint checking and passes all tests.
+        const share = (myWeight + myLoad) / mySupporters.size;
+        for (const supId of mySupporters) {
+          this.loadAbove.set(supId, (this.loadAbove.get(supId) ?? 0) + share);
+
+          const newDeg = (inDegree.get(supId) ?? 1) - 1;
+          inDegree.set(supId, newDeg);
+          if (newDeg === 0) {
+            queue.push(supId);
+          }
+        }
+      }
+    }
   }
 
-  private recalculateLoad(_instanceId: string): void {
-    // Recalculate cumulative load for this instance
-    // TODO: implement
+  private getInstanceWeight(instanceId: string): number {
+    const skuId = this.instanceSkuId.get(instanceId);
+    if (!skuId) return 0;
+    return this.skuWeights.get(skuId) ?? 0;
   }
 
-  private findDependents(instanceId: string): string[] {
+  /** Returns the ids of instances that sit directly on top of instanceId. */
+  getDependents(instanceId: string): string[] {
     const dependents: string[] = [];
-    
     for (const [id, supporters] of this.supporters) {
       if (supporters.has(instanceId)) {
         dependents.push(id);
       }
     }
-    
     return dependents;
   }
 }

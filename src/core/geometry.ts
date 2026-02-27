@@ -72,10 +72,11 @@ export function aabbContains(outer: AABB, inner: AABB): boolean {
 // ============================================================================
 
 export function intersectionAreaXZ(a: AABB, b: AABB): number {
-  // X-Z plane intersection (top-down view)
+  // Floor footprint overlap: X-Y plane (X = front→rear, Y = left→right, Z = height)
+  // "XZ" name is legacy; this is the top-down (bird's-eye) overlap used for support checks.
   const xOverlap = Math.max(0, Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x));
-  const zOverlap = Math.max(0, Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z));
-  return xOverlap * zOverlap;
+  const yOverlap = Math.max(0, Math.min(a.max.y, b.max.y) - Math.max(a.min.y, b.min.y));
+  return xOverlap * yOverlap;
 }
 
 export function bottomArea(aabb: AABB): number {
