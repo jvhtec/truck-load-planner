@@ -67,6 +67,12 @@ export interface CaseInstance {
   
   // Rotation around Z axis
   yaw: Yaw;
+
+  // Visual tilt controls in degrees (does not change collision AABB)
+  tilt?: {
+    x: number;
+    y: number;
+  };
   
   // Computed AABB (cached)
   aabb: AABB;

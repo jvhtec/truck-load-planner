@@ -181,7 +181,13 @@ function CaseMesh({
   const color = isSelected ? '#22c55e' : '#6366f1';
 
   return (
-    <mesh position={position} onClick={onClick} castShadow receiveShadow>
+    <mesh
+      position={position}
+      rotation={[((instance.tilt?.x ?? 0) * Math.PI) / 180, 0, ((instance.tilt?.y ?? 0) * Math.PI) / 180]}
+      onClick={onClick}
+      castShadow
+      receiveShadow
+    >
       <boxGeometry args={size} />
       <meshStandardMaterial
         color={color}
