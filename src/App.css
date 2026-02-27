@@ -742,3 +742,84 @@ body {
   border-radius: 0.375rem;
   color: var(--text-primary);
 }
+
+.case-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.case-color-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.mobile-drop-hint {
+  display: none;
+}
+
+.color-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 960px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
+  .app-main,
+  .app-main.left-collapsed,
+  .app-main.right-collapsed,
+  .app-main.left-collapsed.right-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    max-height: 45vh;
+  }
+
+  .main-view {
+    min-height: 50vh;
+  }
+
+  .truck-view-3d {
+    min-height: 50vh;
+  }
+
+  .position-inputs {
+    grid-template-columns: 1fr;
+  }
+
+  .position-inputs.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .placed-list {
+    max-height: 240px;
+  }
+
+  .placed-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+  }
+
+  .mobile-drop-hint {
+    display: inline;
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+  }
+}

@@ -19,6 +19,7 @@ function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [touchDropId, setTouchDropId] = useState<string | null>(null);
 
   const [showNewTruck, setShowNewTruck] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
@@ -31,7 +32,7 @@ function App() {
   const [caseForm, setCaseForm] = useState({
     skuId: '', name: '', l: 800, w: 600, h: 400, weightKg: 45,
     uprightOnly: false, canBeBase: true, topContactAllowed: true,
-    maxLoadAboveKg: 90, minSupportRatio: 0.75,
+    maxLoadAboveKg: 90, minSupportRatio: 0.75, color: '#6366f1',
   });
 
   useEffect(() => {
@@ -81,7 +82,7 @@ function App() {
         </aside>}
 
         <section className="main-view">
-          <TruckView3D truck={state.truck} instances={state.instances} selectedId={state.selectedInstanceId} onSelect={actions.selectInstance} />
+          <TruckView3D truck={state.truck} instances={state.instances} skus={state.skus} selectedId={state.selectedInstanceId} onSelect={actions.selectInstance} />
           {state.validation && !state.validation.valid && (
             <div className="validation-error"><h4>Cannot Place</h4><ul>{state.validation.violations.map((v, i) => <li key={i}>{v}</li>)}</ul></div>
           )}
@@ -93,6 +94,12 @@ function App() {
             onPlace={(skuId, pos, yaw) => {
               const result = actions.placeCase(skuId, pos, yaw);
               if (!result.valid) console.warn('Placement failed:', result);
+            }}
+            onUpdateCase={async (skuId, updates) => {
+              await actions.updateCase(skuId, {
+                name: updates.name,
+                color: updates.color,
+              });
             }}
           />
 
@@ -111,11 +118,27 @@ function App() {
                       const res = actions.swapInstancePositions(draggedId, inst.id);
                       if (!res.valid) console.warn('Swap failed', res);
                     }
+                    setDraggedId(null);
+                  }}
+                  onTouchStart={() => setDraggedId(inst.id)}
+                  onTouchEnd={(e) => {
+                    const touch = e.changedTouches[0];
+                    if (!touch) return;
+                    const target = document.elementFromPoint(touch.clientX, touch.clientY);
+                    const dropId = target?.closest('[data-inst-id]')?.getAttribute('data-inst-id');
+                    setTouchDropId(dropId ?? null);
+                    if (draggedId && dropId && draggedId !== dropId) {
+                      const res = actions.swapInstancePositions(draggedId, dropId);
+                      if (!res.valid) console.warn('Swap failed', res);
+                    }
+                    setDraggedId(null);
                   }}
                   onClick={() => actions.selectInstance(inst.id)}
+                  data-inst-id={inst.id}
                 >
                   <span>{inst.id}</span>
                   <small>({inst.position.x}, {inst.position.y}, {inst.position.z})</small>
+                  <span className="mobile-drop-hint">{touchDropId === inst.id ? 'Drop target' : 'Drag / touch to swap'}</span>
                 </button>
               ))}
             </div>
@@ -194,6 +217,7 @@ function App() {
               <input type="number" placeholder="Width" value={caseForm.w} onChange={e => setCaseForm({ ...caseForm, w: Number(e.target.value) })} />
               <input type="number" placeholder="Height" value={caseForm.h} onChange={e => setCaseForm({ ...caseForm, h: Number(e.target.value) })} />
               <input type="number" placeholder="Weight" value={caseForm.weightKg} onChange={e => setCaseForm({ ...caseForm, weightKg: Number(e.target.value) })} />
+              <label className="color-input">Color <input type="color" value={caseForm.color} onChange={e => setCaseForm({ ...caseForm, color: e.target.value })} /></label>
             </div>
             <div className="dialog-actions">
               <button onClick={() => setShowNewCase(false)}>Cancel</button>
@@ -209,6 +233,7 @@ function App() {
                   topContactAllowed: caseForm.topContactAllowed,
                   maxLoadAboveKg: caseForm.maxLoadAboveKg,
                   minSupportRatio: caseForm.minSupportRatio,
+                  color: caseForm.color,
                 });
                 setShowNewCase(false);
               }}>Create</button>

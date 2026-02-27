@@ -64,6 +64,7 @@ create table if not exists public.case_skus (
   
   -- Optional classification
   stack_class text,
+  color_hex text,
   
   created_at timestamptz default now(),
   updated_at timestamptz default now()

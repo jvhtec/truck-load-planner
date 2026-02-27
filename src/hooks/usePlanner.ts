@@ -50,6 +50,7 @@ interface DbCaseSku {
   max_load_above_kg: number;
   min_support_ratio: number;
   stack_class: string | null;
+  color_hex: string | null;
 }
 
 interface DbLoadPlan {
@@ -102,6 +103,7 @@ function dbToCaseSku(db: DbCaseSku): CaseSKU {
     maxLoadAboveKg: db.max_load_above_kg,
     minSupportRatio: db.min_support_ratio,
     stackClass: db.stack_class || undefined,
+    color: db.color_hex || undefined,
   };
 }
 
@@ -148,6 +150,7 @@ interface CreateCaseInput {
   maxLoadAboveKg: number;
   minSupportRatio: number;
   stackClass?: string;
+  color?: string;
 }
 
 export interface PlannerActions {
@@ -171,6 +174,7 @@ export interface PlannerActions {
   listPlans: () => Promise<SavedPlan[]>;
   createTruck: (input: CreateTruckInput) => Promise<void>;
   createCase: (input: CreateCaseInput) => Promise<void>;
+  updateCase: (skuId: string, updates: Partial<CreateCaseInput>) => Promise<void>;
 }
 
 function buildValidationContext(instances: CaseInstance[], skus: Map<string, CaseSKU>) {
@@ -611,6 +615,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       max_load_above_kg: input.maxLoadAboveKg,
       min_support_ratio: input.minSupportRatio,
       stack_class: input.stackClass || null,
+      color_hex: input.color || null,
     });
 
     if (error) throw error;
@@ -628,10 +633,57 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         maxLoadAboveKg: input.maxLoadAboveKg,
         minSupportRatio: input.minSupportRatio,
         stackClass: input.stackClass,
+        color: input.color,
       };
       const cases = [created, ...prev.cases];
       const skus = new Map(prev.skus);
       skus.set(created.skuId, created);
+      return { ...prev, cases, skus };
+    });
+  }, []);
+
+
+
+  const updateCase = useCallback(async (skuId: string, updates: Partial<CreateCaseInput>) => {
+    const payload: Record<string, unknown> = {};
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.dims?.l !== undefined) payload.length_mm = updates.dims.l;
+    if (updates.dims?.w !== undefined) payload.width_mm = updates.dims.w;
+    if (updates.dims?.h !== undefined) payload.height_mm = updates.dims.h;
+    if (updates.weightKg !== undefined) payload.weight_kg = updates.weightKg;
+    if (updates.uprightOnly !== undefined) payload.upright_only = updates.uprightOnly;
+    if (updates.allowedYaw !== undefined) payload.allowed_yaw = updates.allowedYaw;
+    if (updates.canBeBase !== undefined) payload.can_be_base = updates.canBeBase;
+    if (updates.topContactAllowed !== undefined) payload.top_contact_allowed = updates.topContactAllowed;
+    if (updates.maxLoadAboveKg !== undefined) payload.max_load_above_kg = updates.maxLoadAboveKg;
+    if (updates.minSupportRatio !== undefined) payload.min_support_ratio = updates.minSupportRatio;
+    if (updates.stackClass !== undefined) payload.stack_class = updates.stackClass || null;
+    if (updates.color !== undefined) payload.color_hex = updates.color || null;
+
+    const { error } = await supabase.from('case_skus').update(payload).eq('sku_id', skuId);
+    if (error) throw error;
+
+    setState(prev => {
+      const existing = prev.skus.get(skuId);
+      if (!existing) return prev;
+      const updated: CaseSKU = {
+        ...existing,
+        ...(updates.name !== undefined ? { name: updates.name } : {}),
+        ...(updates.weightKg !== undefined ? { weightKg: updates.weightKg } : {}),
+        ...(updates.uprightOnly !== undefined ? { uprightOnly: updates.uprightOnly } : {}),
+        ...(updates.allowedYaw !== undefined ? { allowedYaw: updates.allowedYaw } : {}),
+        ...(updates.canBeBase !== undefined ? { canBeBase: updates.canBeBase } : {}),
+        ...(updates.topContactAllowed !== undefined ? { topContactAllowed: updates.topContactAllowed } : {}),
+        ...(updates.maxLoadAboveKg !== undefined ? { maxLoadAboveKg: updates.maxLoadAboveKg } : {}),
+        ...(updates.minSupportRatio !== undefined ? { minSupportRatio: updates.minSupportRatio } : {}),
+        ...(updates.stackClass !== undefined ? { stackClass: updates.stackClass } : {}),
+        ...(updates.color !== undefined ? { color: updates.color } : {}),
+        ...(updates.dims ? { dims: updates.dims } : {}),
+      };
+
+      const cases = prev.cases.map(c => (c.skuId === skuId ? updated : c));
+      const skus = new Map(prev.skus);
+      skus.set(skuId, updated);
       return { ...prev, cases, skus };
     });
   }, []);
@@ -650,5 +702,6 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     listPlans,
     createTruck,
     createCase,
+    updateCase,
   }];
 }

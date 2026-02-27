@@ -27,6 +27,7 @@ export interface AABB {
 export interface CaseSKU {
   skuId: string;
   name: string;
+  color?: string;
   
   // Physical dimensions (mm)
   dims: {
