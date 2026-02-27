@@ -5,6 +5,7 @@ import type {
   CaseInstance,
   LoadMetrics,
   ValidationResult,
+  ValidationError,
   Yaw,
 } from '../core/types';
 import {
@@ -326,7 +327,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         validation: result.unplaced.length > 0
           ? {
               valid: false,
-              violations: ['OUT_OF_BOUNDS'],
+              // Show the actual top rejection reason(s) instead of a hardcoded OUT_OF_BOUNDS
+              violations: (Object.entries(result.reasonSummary)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k]) => k)) as ValidationError[],
               details: { unplaced: result.unplaced, reasons: result.reasonSummary }
             }
           : null,
