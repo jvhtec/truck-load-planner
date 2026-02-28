@@ -32,6 +32,17 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
         run: npm run build
+
+      - name: Stamp deploy metadata
+        run: |
+          cat > dist/deploy-info.json << EOF
+          {
+            "sha": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "deployed_at_utc": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
       
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
@@ -41,3 +52,4 @@ jobs:
           publish_branch: gh-pages
           destination_dir: .
           keep_files: true  # Keep PR preview directories
+          allow_empty_commit: true
