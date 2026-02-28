@@ -1161,6 +1161,13 @@ body {
     cursor: not-allowed;
   }
 
+  /* Fix viewport height for mobile browsers (iOS Safari includes URL bar in 100vh) */
+  .app {
+    min-height: 0;
+    height: 100%;
+    height: 100dvh; /* Dynamic viewport height — always matches visible area */
+  }
+
   /* ─── Tab-based Main Layout ─── */
   .app-main,
   .app-main.left-collapsed,
@@ -1169,6 +1176,7 @@ body {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
     overflow: hidden;
+    min-height: 0;
   }
 
   /* Override desktop-hidden on mobile — always render for tab navigation */
@@ -1185,18 +1193,21 @@ body {
 
   /* Show the active panel based on data-mobile-tab */
   .app-main[data-mobile-tab="trucks"] .sidebar.left {
-    display: block;
-    max-height: none;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
     overflow-y: auto;
   }
 
   .app-main[data-mobile-tab="view"] .main-view {
     display: block;
+    height: 100%;
   }
 
   .app-main[data-mobile-tab="cases"] .sidebar.right {
-    display: block;
-    max-height: none;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
     overflow-y: auto;
   }
 
@@ -1211,7 +1222,7 @@ body {
   }
 
   .truck-view-3d {
-    min-height: 100%;
+    min-height: 0;
     height: 100%;
   }
 
@@ -1219,11 +1230,12 @@ body {
   .mobile-tab-bar {
     display: flex;
     position: relative;
-    z-index: 50;
+    z-index: 100;
     background: var(--bg-card);
-    border-top: 1px solid var(--border-color);
+    border-top: 2px solid var(--border-color);
     padding: 0.25rem 0 calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
     flex-shrink: 0;
+    min-height: 56px;
   }
 
   .mobile-tab-bar button {
@@ -1236,13 +1248,15 @@ body {
     border: none;
     background: none;
     color: var(--text-secondary);
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     cursor: pointer;
     transition: color 0.15s;
+    min-height: 44px;
   }
 
   .mobile-tab-bar button.active {
     color: var(--accent-blue);
+    font-weight: 600;
   }
 
   .mobile-tab-bar button svg {

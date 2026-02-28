@@ -6,10 +6,11 @@ interface CaseCatalogProps {
   onPlace: (skuId: string, position: { x: number; y: number; z: number }, yaw: Yaw) => void;
   onUpdateCase: (skuId: string, updates: Partial<CaseSKU>) => Promise<void>;
   onDeleteCase: (skuId: string) => Promise<void>;
+  onNewCase?: () => void;
   lang: 'es' | 'en';
 }
 
-export function CaseCatalog({ cases, onPlace, onUpdateCase, onDeleteCase, lang }: CaseCatalogProps) {
+export function CaseCatalog({ cases, onPlace, onUpdateCase, onDeleteCase, onNewCase, lang }: CaseCatalogProps) {
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [yaw, setYaw] = useState<Yaw>(0);
@@ -32,6 +33,7 @@ export function CaseCatalog({ cases, onPlace, onUpdateCase, onDeleteCase, lang }
     ? {
         title: 'Cajas',
         empty: 'No hay cajas cargadas',
+        newCase: 'Nuevo Tipo de Caja',
         noStack: 'No Apilar',
         upright: 'Vertical',
         tilt: 'Inclinacion Y',
@@ -64,6 +66,7 @@ export function CaseCatalog({ cases, onPlace, onUpdateCase, onDeleteCase, lang }
     : {
         title: 'Cases',
         empty: 'No cases loaded',
+        newCase: 'New Case Type',
         noStack: 'No Stack',
         upright: 'Upright',
         tilt: 'Tilt Y',
@@ -126,6 +129,11 @@ export function CaseCatalog({ cases, onPlace, onUpdateCase, onDeleteCase, lang }
     <div className="case-catalog">
       <h3>{t.title}</h3>
 
+      {onNewCase && (
+        <button className="place-button" style={{ marginBottom: '0.75rem' }} onClick={onNewCase}>
+          + {t.newCase}
+        </button>
+      )}
       <div className="case-list">
         {cases.length === 0 ? <p className="empty-message">{t.empty}</p> : (
           cases.map((c) => (

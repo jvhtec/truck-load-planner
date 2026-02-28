@@ -13,10 +13,11 @@ interface TruckSelectorProps {
     maxLeftRightPercentDiff: number;
   }) => Promise<void>;
   onDeleteTruck: (truckId: string) => Promise<void>;
+  onNewTruck?: () => void;
   lang: 'es' | 'en';
 }
 
-export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDeleteTruck, lang }: TruckSelectorProps) {
+export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDeleteTruck, onNewTruck, lang }: TruckSelectorProps) {
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
     ? {
         title: 'Seleccionar Camion',
         empty: 'No hay camiones cargados',
+        newTruck: 'Nuevo Tipo de Camion',
         payload: 'Carga maxima',
         editToggleOpen: 'Editar camion seleccionado',
         editToggleClose: 'Ocultar editor de camion',
@@ -60,6 +62,7 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
     : {
         title: 'Select Truck',
         empty: 'No trucks loaded',
+        newTruck: 'New Truck Type',
         payload: 'Max payload',
         editToggleOpen: 'Edit selected truck',
         editToggleClose: 'Hide truck editor',
@@ -101,6 +104,11 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
   return (
     <div className="truck-selector">
       <h3>{t.title}</h3>
+      {onNewTruck && (
+        <button className="place-button" style={{ marginBottom: '0.75rem' }} onClick={onNewTruck}>
+          + {t.newTruck}
+        </button>
+      )}
       <div className="truck-list">
         {trucks.length === 0 ? (
           <p className="empty-message">{t.empty}</p>

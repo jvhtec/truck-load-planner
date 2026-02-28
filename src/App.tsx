@@ -73,7 +73,7 @@ function App() {
   const [lang, setLang] = useState<'es' | 'en'>('es');
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true);
   const [showSpatialMetrics, setShowSpatialMetrics] = useState(false);
-  const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('view');
+  const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('trucks');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   const [showNewTruck, setShowNewTruck] = useState(false);
@@ -304,6 +304,13 @@ function App() {
     const staged = new Set(state.instances.filter(i => i.staged).map(i => i.id));
     setSelectedStagedIds(prev => prev.filter(id => staged.has(id)));
   }, [state.instances]);
+
+  // Auto-switch mobile tab when truck selection changes
+  useEffect(() => {
+    if (state.truck) {
+      setMobileTab('view');
+    }
+  }, [state.truck?.truckId]);
 
   if (state.loading) {
     return <div className="app loading"><div className="spinner" /><p>{t.loading}</p></div>;
@@ -666,6 +673,7 @@ function App() {
             onSelect={actions.setTruck}
             onUpdateTruck={actions.updateTruck}
             onDeleteTruck={actions.deleteTruck}
+            onNewTruck={() => setShowNewTruck(true)}
             lang={lang}
           />
           <div className="auto-pack-section">
@@ -814,6 +822,7 @@ function App() {
               });
             }}
             onDeleteCase={actions.deleteCase}
+            onNewCase={() => setShowNewCase(true)}
           />
 
           <div className="placed-items">
