@@ -626,7 +626,7 @@ function App() {
     const lowerName = file.name.toLowerCase();
     if (lowerName.endsWith('.xlsx')) {
       alert(t.importCasesHelp);
-      throw new Error(t.importCasesHelp);
+      return;
     }
     const csvText = await file.text();
     const rows = parseCaseCsv(csvText);
@@ -646,7 +646,7 @@ function App() {
         name: row.boxName,
         dims: { l: row.length, w: row.width, h: row.height },
         weightKg: row.weight,
-        uprightOnly: row.noRotate,
+        uprightOnly: row.noTilt,
         tiltAllowed: !row.noTilt,
         allowedYaw,
         canBeBase,
