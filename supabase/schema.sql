@@ -53,6 +53,7 @@ create table if not exists case_skus (
   
   -- Orientation constraints
   upright_only boolean not null default false,
+  tilt_allowed boolean not null default false,
   allowed_yaw integer[] not null default array[0, 90, 180, 270],
   
   -- Stacking constraints

@@ -52,6 +52,7 @@ create table if not exists public.case_skus (
   
   -- Orientation constraints
   upright_only boolean not null default false,
+  tilt_allowed boolean not null default false,
   allowed_yaw integer[] not null default array[0, 90, 180, 270],
   
   -- Stacking constraints
@@ -118,6 +119,7 @@ alter table public.load_plans enable row level security;
 create policy "Allow public read access" on public.trucks for select using (true);
 create policy "Allow public read access" on public.case_skus for select using (true);
 create policy "Allow public read access" on public.load_plans for select using (true);
+create policy "Allow public write access" on public.case_skus for all using (true) with check (true);
 create policy "Allow public write access" on public.load_plans for all using (true);
 
 -- ============================================================================

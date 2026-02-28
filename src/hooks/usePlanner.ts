@@ -13,7 +13,8 @@ import {
   computeMetrics,
   validatePlacement,
   autoPack,
-  computeAABB,
+  computeOrientedAABB,
+  aabbOverlap,
 } from '../core';
 import { SupportGraph } from '../core/support';
 import { SpatialIndex } from '../core/spatial';
@@ -51,6 +52,7 @@ interface DbCaseSku {
   min_support_ratio: number;
   stack_class: string | null;
   color_hex: string | null;
+  tilt_allowed: boolean | null;
 }
 
 interface DbLoadPlan {
@@ -104,6 +106,7 @@ function dbToCaseSku(db: DbCaseSku): CaseSKU {
     minSupportRatio: db.min_support_ratio,
     stackClass: db.stack_class || undefined,
     color: db.color_hex || undefined,
+    tiltAllowed: db.tilt_allowed ?? false,
   };
 }
 
@@ -138,6 +141,14 @@ interface CreateTruckInput {
   maxLeftRightPercentDiff: number;
 }
 
+interface UpdateTruckInput {
+  name: string;
+  innerDims: { x: number; y: number; z: number };
+  emptyWeightKg: number;
+  axle: { frontX: number; rearX: number; maxFrontKg: number; maxRearKg: number };
+  maxLeftRightPercentDiff: number;
+}
+
 interface CreateCaseInput {
   skuId: string;
   name: string;
@@ -151,18 +162,28 @@ interface CreateCaseInput {
   minSupportRatio: number;
   stackClass?: string;
   color?: string;
+  tiltAllowed?: boolean;
+}
+
+const AUTOPLACE_STEP_MM = 100;
+
+function normalizeTilt(input?: { x?: number; y?: number } | null): { y: 0 | 90 } {
+  const y = input?.y === 90 ? 90 : 0;
+  if (y === 90) return { y: 90 };
+  return { y: 0 };
 }
 
 export interface PlannerActions {
   setTruck: (truck: TruckType) => void;
-  placeCase: (skuId: string, position: { x: number; y: number; z: number }, yaw: Yaw) => ValidationResult;
+  placeCase: (skuId: string, _position: { x: number; y: number; z: number }, yaw: Yaw) => ValidationResult;
+  autoPlaceInstances: (instanceIds: string[]) => ValidationResult;
   removeCase: (instanceId: string) => void;
   updateInstance: (
     instanceId: string,
     updates: {
       position?: { x: number; y: number; z: number };
       yaw?: Yaw;
-      tilt?: { x: number; y: number };
+      tilt?: { y: number };
     }
   ) => ValidationResult;
   swapInstancePositions: (sourceId: string, targetId: string) => ValidationResult;
@@ -173,8 +194,11 @@ export interface PlannerActions {
   loadPlan: (planId: string) => Promise<void>;
   listPlans: () => Promise<SavedPlan[]>;
   createTruck: (input: CreateTruckInput) => Promise<void>;
+  updateTruck: (truckId: string, input: UpdateTruckInput) => Promise<void>;
+  deleteTruck: (truckId: string) => Promise<void>;
   createCase: (input: CreateCaseInput) => Promise<void>;
   updateCase: (skuId: string, updates: Partial<CreateCaseInput>) => Promise<void>;
+  deleteCase: (skuId: string) => Promise<void>;
 }
 
 function buildValidationContext(instances: CaseInstance[], skus: Map<string, CaseSKU>) {
@@ -189,6 +213,98 @@ function buildValidationContext(instances: CaseInstance[], skus: Map<string, Cas
   }
 
   return { supportGraph, spatialIndex, skuWeights };
+}
+
+function inTruckBounds(aabb: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, truck: TruckType): boolean {
+  return (
+    aabb.min.x >= 0 &&
+    aabb.min.y >= 0 &&
+    aabb.min.z >= 0 &&
+    aabb.max.x <= truck.innerDims.x &&
+    aabb.max.y <= truck.innerDims.y &&
+    aabb.max.z <= truck.innerDims.z
+  );
+}
+
+function findMagneticSnapCandidate(
+  candidate: CaseInstance,
+  sku: CaseSKU,
+  truck: TruckType,
+  others: CaseInstance[],
+  skus: Map<string, CaseSKU>
+): CaseInstance | null {
+  const sizeX = candidate.aabb.max.x - candidate.aabb.min.x;
+  const sizeY = candidate.aabb.max.y - candidate.aabb.min.y;
+  const maxX = Math.max(0, truck.innerDims.x - sizeX);
+  const maxY = Math.max(0, truck.innerDims.y - sizeY);
+  const requested = candidate.position;
+
+  const blockers = others.filter(other => aabbOverlap(candidate.aabb, other.aabb));
+  if (blockers.length === 0) return null;
+
+  const seen = new Set<string>();
+  const positions: Array<{ x: number; y: number; z: number }> = [];
+  const push = (xRaw: number, yRaw: number, zRaw: number) => {
+    const pos = {
+      x: Math.max(0, Math.min(Math.round(xRaw), maxX)),
+      y: Math.max(0, Math.min(Math.round(yRaw), maxY)),
+      z: Math.max(0, Math.round(zRaw)),
+    };
+    const key = `${pos.x}|${pos.y}|${pos.z}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    positions.push(pos);
+  };
+
+  // Candidate positions around each blocking box:
+  // - single-axis snaps (left/right/front/back)
+  // - corner snaps to resolve two-axis overlaps
+  for (const blocker of blockers) {
+    const leftX = blocker.aabb.min.x - sizeX;
+    const rightX = blocker.aabb.max.x;
+    const frontY = blocker.aabb.min.y - sizeY;
+    const backY = blocker.aabb.max.y;
+    const z = requested.z;
+
+    push(leftX, requested.y, z);
+    push(rightX, requested.y, z);
+    push(requested.x, frontY, z);
+    push(requested.x, backY, z);
+
+    push(leftX, frontY, z);
+    push(leftX, backY, z);
+    push(rightX, frontY, z);
+    push(rightX, backY, z);
+  }
+
+  let best: { dist: number; inst: CaseInstance } | null = null;
+  for (const pos of positions) {
+    const snapped: CaseInstance = {
+      ...candidate,
+      position: pos,
+      aabb: computeOrientedAABB(sku, pos, candidate.yaw, normalizeTilt(candidate.tilt)),
+    };
+    const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(others, skus);
+    const validation = validatePlacement(snapped, {
+      truck,
+      skus,
+      instances: others,
+      supportGraph,
+      skuWeights,
+      spatialIndex,
+    });
+    if (!validation.valid) continue;
+
+    const dx = snapped.position.x - requested.x;
+    const dy = snapped.position.y - requested.y;
+    const dz = snapped.position.z - requested.z;
+    const dist = dx * dx + dy * dy + dz * dz;
+    if (!best || dist < best.dist) {
+      best = { dist, inst: snapped };
+    }
+  }
+
+  return best?.inst ?? null;
 }
 
 export function usePlanner(): [PlannerState, PlannerActions] {
@@ -233,7 +349,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     if (!truck) return null;
     const skuWeights = new Map<string, number>();
     skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
-    return computeMetrics(instances, skuWeights, truck);
+    return computeMetrics(instances.filter(i => !i.staged), skuWeights, truck);
   }, []);
 
   const setTruck = useCallback((truck: TruckType) => {
@@ -247,7 +363,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     }));
   }, [updateMetrics]);
 
-  const placeCase = useCallback((skuId: string, position: { x: number; y: number; z: number }, yaw: Yaw): ValidationResult => {
+  const placeCase = useCallback((skuId: string, _position: { x: number; y: number; z: number }, yaw: Yaw): ValidationResult => {
     let result: ValidationResult = { valid: false, violations: [] };
 
     setState(prev => {
@@ -262,21 +378,16 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         return prev;
       }
 
-      const candidate = createInstance(`${skuId}-${Date.now()}`, sku, position, yaw);
-      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(prev.instances, prev.skus);
-      const validation = validatePlacement(candidate, {
-        truck: prev.truck,
-        skus: prev.skus,
-        instances: prev.instances,
-        supportGraph,
-        skuWeights,
-        spatialIndex,
-      });
-
-      result = validation;
-      if (!validation.valid) return { ...prev, validation };
-
-      const newInstances = [...prev.instances, { ...candidate, tilt: { x: 0, y: 0 } }];
+      const stagedCount = prev.instances.filter(i => i.staged).length;
+      const stagedCol = stagedCount % 4;
+      const stagedRow = Math.floor(stagedCount / 4);
+      const stagedX = stagedCol * (sku.dims.l + 150);
+      const stagedY = -((stagedRow + 1) * (sku.dims.w + 250));
+      const stagedPosition = { x: stagedX, y: stagedY, z: 0 };
+      const candidate = createInstance(`${skuId}-${Date.now()}`, sku, stagedPosition, yaw);
+      const staged = { ...candidate, staged: true, tilt: { y: 0 } as const, aabb: computeOrientedAABB(sku, stagedPosition, yaw, { y: 0 }) };
+      const newInstances = [...prev.instances, staged];
+      result = { valid: true, violations: [] };
       return {
         ...prev,
         instances: newInstances,
@@ -290,7 +401,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
   const updateInstance = useCallback((
     instanceId: string,
-    updates: { position?: { x: number; y: number; z: number }; yaw?: Yaw; tilt?: { x: number; y: number } }
+    updates: { position?: { x: number; y: number; z: number }; yaw?: Yaw; tilt?: { y: number } }
   ): ValidationResult => {
     let result: ValidationResult = { valid: false, violations: [] };
 
@@ -305,30 +416,141 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         ...current,
         position: updates.position ?? current.position,
         yaw: updates.yaw ?? current.yaw,
-        tilt: updates.tilt ?? current.tilt ?? { x: 0, y: 0 },
+        tilt: normalizeTilt(updates.tilt ?? current.tilt),
       };
-      candidate.aabb = computeAABB(sku, candidate.position, candidate.yaw);
+      candidate.aabb = computeOrientedAABB(sku, candidate.position, candidate.yaw, candidate.tilt);
 
-      const withoutCurrent = prev.instances.filter(i => i.id !== instanceId);
-      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(withoutCurrent, prev.skus);
+      if (current.staged && !inTruckBounds(candidate.aabb, prev.truck)) {
+        result = { valid: true, violations: [] };
+        const stagedUpdate = { ...candidate, staged: true };
+        const stagedInstances = prev.instances.map(i => (i.id === instanceId ? stagedUpdate : i));
+        return {
+          ...prev,
+          instances: stagedInstances,
+          metrics: updateMetrics(stagedInstances, prev.truck, prev.skus),
+          validation: null,
+        };
+      }
+
+      const placedWithoutCurrent = prev.instances.filter(i => !i.staged && i.id !== instanceId);
+      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedWithoutCurrent, prev.skus);
       const validation = validatePlacement(candidate, {
         truck: prev.truck,
         skus: prev.skus,
-        instances: withoutCurrent,
+        instances: placedWithoutCurrent,
         supportGraph,
         skuWeights,
         spatialIndex,
       });
       result = validation;
 
-      if (!validation.valid) return { ...prev, validation };
+      if (!validation.valid) {
+        if (updates.position && validation.violations.includes('COLLISION')) {
+          const snapped = findMagneticSnapCandidate(candidate, sku, prev.truck, placedWithoutCurrent, prev.skus);
+          if (snapped) {
+            result = { valid: true, violations: [] };
+            const movedInside = { ...snapped, staged: false };
+            const snappedInstances = prev.instances.map(i => (i.id === instanceId ? movedInside : i));
+            return {
+              ...prev,
+              instances: snappedInstances,
+              metrics: updateMetrics(snappedInstances, prev.truck, prev.skus),
+              validation: null,
+            };
+          }
+        }
+        return { ...prev, validation };
+      }
 
-      const newInstances = prev.instances.map(i => (i.id === instanceId ? candidate : i));
+      const movedInside = { ...candidate, staged: false };
+      const newInstances = prev.instances.map(i => (i.id === instanceId ? movedInside : i));
       return {
         ...prev,
         instances: newInstances,
         metrics: updateMetrics(newInstances, prev.truck, prev.skus),
         validation: null,
+      };
+    });
+
+    return result;
+  }, [updateMetrics]);
+
+  const autoPlaceInstances = useCallback((instanceIds: string[]): ValidationResult => {
+    let result: ValidationResult = { valid: false, violations: [] };
+
+    setState(prev => {
+      if (!prev.truck || instanceIds.length === 0) return prev;
+
+      const ids = new Set(instanceIds);
+      const stagedToPlace = prev.instances.filter(i => i.staged && ids.has(i.id));
+      if (stagedToPlace.length === 0) {
+        result = { valid: false, violations: ['INVALID_ORIENTATION'], details: { error: 'No staged items selected' } };
+        return prev;
+      }
+
+      const allInstances = [...prev.instances];
+      const failed: string[] = [];
+      const placedNow: CaseInstance[] = allInstances.filter(i => !i.staged);
+
+      for (const staged of stagedToPlace) {
+        const sku = prev.skus.get(staged.skuId);
+        if (!sku) {
+          failed.push(staged.id);
+          continue;
+        }
+
+        let placedCandidate: CaseInstance | null = null;
+        const zLevels = Array.from(new Set([0, ...placedNow.map(i => i.aabb.max.z)])).sort((a, b) => a - b);
+
+        for (const z of zLevels) {
+          if (placedCandidate) break;
+          const maxX = Math.max(0, prev.truck.innerDims.x - (staged.aabb.max.x - staged.aabb.min.x));
+          const maxY = Math.max(0, prev.truck.innerDims.y - (staged.aabb.max.y - staged.aabb.min.y));
+          for (let x = 0; x <= maxX; x += AUTOPLACE_STEP_MM) {
+            if (placedCandidate) break;
+            for (let y = 0; y <= maxY; y += AUTOPLACE_STEP_MM) {
+              const candidate: CaseInstance = {
+                ...staged,
+                position: { x, y, z },
+                aabb: computeOrientedAABB(sku, { x, y, z }, staged.yaw, normalizeTilt(staged.tilt)),
+                staged: false,
+              };
+              const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedNow, prev.skus);
+              const validation = validatePlacement(candidate, {
+                truck: prev.truck,
+                skus: prev.skus,
+                instances: placedNow,
+                supportGraph,
+                skuWeights,
+                spatialIndex,
+              });
+              if (validation.valid) {
+                placedCandidate = candidate;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!placedCandidate) {
+          failed.push(staged.id);
+          continue;
+        }
+
+        const ix = allInstances.findIndex(i => i.id === staged.id);
+        if (ix >= 0) allInstances[ix] = placedCandidate;
+        placedNow.push(placedCandidate);
+      }
+
+      result = failed.length === 0
+        ? { valid: true, violations: [] }
+        : { valid: false, violations: ['COLLISION'], details: { failedIds: failed } };
+
+      return {
+        ...prev,
+        instances: allInstances,
+        metrics: updateMetrics(allInstances, prev.truck, prev.skus),
+        validation: failed.length === 0 ? null : result,
       };
     });
 
@@ -344,6 +566,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       const source = prev.instances.find(i => i.id === sourceId);
       const target = prev.instances.find(i => i.id === targetId);
       if (!source || !target) return prev;
+      if (source.staged || target.staged) return prev;
 
       const sourceUpdated = { ...source, position: target.position };
       const targetUpdated = { ...target, position: source.position };
@@ -351,16 +574,17 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       const targetSku = prev.skus.get(target.skuId);
       if (!sourceSku || !targetSku) return prev;
 
-      sourceUpdated.aabb = computeAABB(sourceSku, sourceUpdated.position, sourceUpdated.yaw);
-      targetUpdated.aabb = computeAABB(targetSku, targetUpdated.position, targetUpdated.yaw);
+      sourceUpdated.aabb = computeOrientedAABB(sourceSku, sourceUpdated.position, sourceUpdated.yaw, normalizeTilt(sourceUpdated.tilt));
+      targetUpdated.aabb = computeOrientedAABB(targetSku, targetUpdated.position, targetUpdated.yaw, normalizeTilt(targetUpdated.tilt));
 
       const others = prev.instances.filter(i => i.id !== sourceId && i.id !== targetId);
-      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(others, prev.skus);
+      const placedOthers = others.filter(i => !i.staged);
+      const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedOthers, prev.skus);
 
       const v1 = validatePlacement(sourceUpdated, {
         truck: prev.truck,
         skus: prev.skus,
-        instances: others,
+        instances: placedOthers,
         supportGraph,
         skuWeights,
         spatialIndex,
@@ -370,13 +594,13 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         return { ...prev, validation: v1 };
       }
 
-      supportGraph.addInstance(sourceUpdated, [...others, sourceUpdated]);
+      supportGraph.addInstance(sourceUpdated, [...placedOthers, sourceUpdated]);
       spatialIndex.add(sourceUpdated.id, sourceUpdated.aabb);
 
       const v2 = validatePlacement(targetUpdated, {
         truck: prev.truck,
         skus: prev.skus,
-        instances: [...others, sourceUpdated],
+        instances: [...placedOthers, sourceUpdated],
         supportGraph,
         skuWeights,
         spatialIndex,
@@ -422,11 +646,12 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       if (!prev.truck) return prev;
       const skus = Array.from(prev.skus.values());
       const result = autoPack(prev.truck, skus, skuQuantities);
-      const placed = result.placed.map(inst => ({ ...inst, tilt: { x: 0, y: 0 } }));
+      const placed = result.placed.map(inst => ({ ...inst, tilt: { y: 0 } as const }));
+      const staged = prev.instances.filter(i => i.staged);
 
       return {
         ...prev,
-        instances: placed,
+        instances: [...staged, ...placed],
         metrics: result.metrics,
         validation: result.unplaced.length > 0
           ? {
@@ -475,12 +700,14 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       .insert({
         name,
         truck_id: truckRow.id,
-        instances: currentState.instances.map(inst => ({
+        instances: currentState.instances
+        .filter(inst => !inst.staged)
+        .map(inst => ({
           id: inst.id,
           skuId: inst.skuId,
           position: inst.position,
           yaw: inst.yaw,
-          tilt: inst.tilt ?? { x: 0, y: 0 },
+          tilt: normalizeTilt(inst.tilt),
         })),
         total_weight_kg: currentState.metrics?.totalWeightKg ?? 0,
         front_axle_kg: currentState.metrics?.frontAxleKg ?? 0,
@@ -521,7 +748,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         skuId: string;
         position: { x: number; y: number; z: number };
         yaw: Yaw;
-        tilt?: { x: number; y: number };
+        tilt?: { y: number };
       }>;
 
       const instances: CaseInstance[] = savedInstances.map(saved => {
@@ -534,8 +761,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
           skuId: saved.skuId,
           position: saved.position,
           yaw: saved.yaw,
-          tilt: saved.tilt ?? { x: 0, y: 0 },
-          aabb: computeAABB(sku, saved.position, saved.yaw),
+          tilt: normalizeTilt(saved.tilt),
+          staged: false,
+          aabb: computeOrientedAABB(sku, saved.position, saved.yaw, normalizeTilt(saved.tilt)),
         };
       });
 
@@ -600,6 +828,68 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     });
   }, []);
 
+  const updateTruck = useCallback(async (truckId: string, input: UpdateTruckInput) => {
+    const { error } = await supabase.from('trucks').update({
+      name: input.name,
+      inner_length_mm: input.innerDims.x,
+      inner_width_mm: input.innerDims.y,
+      inner_height_mm: input.innerDims.z,
+      empty_weight_kg: input.emptyWeightKg,
+      axle_front_x_mm: input.axle.frontX,
+      axle_rear_x_mm: input.axle.rearX,
+      axle_max_front_kg: input.axle.maxFrontKg,
+      axle_max_rear_kg: input.axle.maxRearKg,
+      max_lr_imbalance_percent: input.maxLeftRightPercentDiff,
+    }).eq('truck_id', truckId);
+    if (error) throw error;
+
+    setState(prev => {
+      const trucks = prev.trucks.map(t => {
+        if (t.truckId !== truckId) return t;
+        return {
+          ...t,
+          name: input.name,
+          innerDims: input.innerDims,
+          emptyWeightKg: input.emptyWeightKg,
+          axle: input.axle,
+          balance: { maxLeftRightPercentDiff: input.maxLeftRightPercentDiff },
+        };
+      });
+      const truck = prev.truck?.truckId === truckId
+        ? trucks.find(t => t.truckId === truckId) ?? prev.truck
+        : prev.truck;
+      const nextTruck = truck ?? null;
+      return {
+        ...prev,
+        trucks,
+        truck: nextTruck,
+        metrics: nextTruck ? updateMetrics(prev.instances, nextTruck, prev.skus) : prev.metrics,
+      };
+    });
+  }, [updateMetrics]);
+
+  const deleteTruck = useCallback(async (truckId: string) => {
+    const { error } = await supabase
+      .from('trucks')
+      .delete()
+      .eq('truck_id', truckId);
+    if (error) throw error;
+
+    setState(prev => {
+      const trucks = prev.trucks.filter(t => t.truckId !== truckId);
+      const removedSelected = prev.truck?.truckId === truckId;
+      return {
+        ...prev,
+        trucks,
+        truck: removedSelected ? null : prev.truck,
+        instances: removedSelected ? [] : prev.instances,
+        metrics: removedSelected ? null : prev.metrics,
+        selectedInstanceId: removedSelected ? null : prev.selectedInstanceId,
+        validation: removedSelected ? null : prev.validation,
+      };
+    });
+  }, []);
+
   const createCase = useCallback(async (input: CreateCaseInput) => {
     const { error } = await supabase.from('case_skus').insert({
       sku_id: input.skuId,
@@ -611,6 +901,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       upright_only: input.uprightOnly,
       allowed_yaw: input.allowedYaw,
       can_be_base: input.canBeBase,
+      tilt_allowed: input.tiltAllowed ?? false,
       top_contact_allowed: input.topContactAllowed,
       max_load_above_kg: input.maxLoadAboveKg,
       min_support_ratio: input.minSupportRatio,
@@ -629,6 +920,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         uprightOnly: input.uprightOnly,
         allowedYaw: input.allowedYaw,
         canBeBase: input.canBeBase,
+        tiltAllowed: input.tiltAllowed ?? false,
         topContactAllowed: input.topContactAllowed,
         maxLoadAboveKg: input.maxLoadAboveKg,
         minSupportRatio: input.minSupportRatio,
@@ -654,14 +946,22 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     if (updates.uprightOnly !== undefined) payload.upright_only = updates.uprightOnly;
     if (updates.allowedYaw !== undefined) payload.allowed_yaw = updates.allowedYaw;
     if (updates.canBeBase !== undefined) payload.can_be_base = updates.canBeBase;
+    if (updates.tiltAllowed !== undefined) payload.tilt_allowed = updates.tiltAllowed;
     if (updates.topContactAllowed !== undefined) payload.top_contact_allowed = updates.topContactAllowed;
     if (updates.maxLoadAboveKg !== undefined) payload.max_load_above_kg = updates.maxLoadAboveKg;
     if (updates.minSupportRatio !== undefined) payload.min_support_ratio = updates.minSupportRatio;
     if (updates.stackClass !== undefined) payload.stack_class = updates.stackClass || null;
     if (updates.color !== undefined) payload.color_hex = updates.color || null;
 
-    const { error } = await supabase.from('case_skus').update(payload).eq('sku_id', skuId);
+    const { data, error } = await supabase
+      .from('case_skus')
+      .update(payload)
+      .eq('sku_id', skuId)
+      .select('sku_id');
     if (error) throw error;
+    if (!data || data.length === 0) {
+      throw new Error(`No case row updated for sku_id=${skuId}. Check RLS policy and table grants.`);
+    }
 
     setState(prev => {
       const existing = prev.skus.get(skuId);
@@ -673,6 +973,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         ...(updates.uprightOnly !== undefined ? { uprightOnly: updates.uprightOnly } : {}),
         ...(updates.allowedYaw !== undefined ? { allowedYaw: updates.allowedYaw } : {}),
         ...(updates.canBeBase !== undefined ? { canBeBase: updates.canBeBase } : {}),
+        ...(updates.tiltAllowed !== undefined ? { tiltAllowed: updates.tiltAllowed } : {}),
         ...(updates.topContactAllowed !== undefined ? { topContactAllowed: updates.topContactAllowed } : {}),
         ...(updates.maxLoadAboveKg !== undefined ? { maxLoadAboveKg: updates.maxLoadAboveKg } : {}),
         ...(updates.minSupportRatio !== undefined ? { minSupportRatio: updates.minSupportRatio } : {}),
@@ -688,12 +989,40 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     });
   }, []);
 
+  const deleteCase = useCallback(async (skuId: string) => {
+    const { error } = await supabase
+      .from('case_skus')
+      .delete()
+      .eq('sku_id', skuId);
+    if (error) throw error;
+
+    setState(prev => {
+      const cases = prev.cases.filter(c => c.skuId !== skuId);
+      const skus = new Map(prev.skus);
+      skus.delete(skuId);
+      const instances = prev.instances.filter(i => i.skuId !== skuId);
+      const selectedRemoved = prev.selectedInstanceId
+        ? prev.instances.some(i => i.id === prev.selectedInstanceId && i.skuId === skuId)
+        : false;
+      return {
+        ...prev,
+        cases,
+        skus,
+        instances,
+        selectedInstanceId: selectedRemoved ? null : prev.selectedInstanceId,
+        metrics: updateMetrics(instances, prev.truck, skus),
+        validation: null,
+      };
+    });
+  }, [updateMetrics]);
+
   return [state, {
     setTruck,
     placeCase,
     removeCase,
     updateInstance,
     swapInstancePositions,
+    autoPlaceInstances,
     runAutoPack,
     clearAll,
     selectInstance,
@@ -701,7 +1030,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     loadPlan,
     listPlans,
     createTruck,
+    updateTruck,
+    deleteTruck,
     createCase,
     updateCase,
+    deleteCase,
   }];
 }

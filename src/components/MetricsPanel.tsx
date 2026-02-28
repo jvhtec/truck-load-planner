@@ -3,14 +3,41 @@ import type { LoadMetrics } from '../core/types';
 interface MetricsPanelProps {
   metrics: LoadMetrics | null;
   truck: { axle: { maxFrontKg: number; maxRearKg: number }; balance: { maxLeftRightPercentDiff: number } } | null;
+  lang: 'es' | 'en';
 }
 
-export function MetricsPanel({ metrics, truck }: MetricsPanelProps) {
+export function MetricsPanel({ metrics, truck, lang }: MetricsPanelProps) {
+  const t = lang === 'es'
+    ? {
+        title: 'Metricas',
+        empty: 'Sin datos todavia',
+        totalCargo: 'Carga Total',
+        maxStackHeight: 'Altura Maxima de Apilado',
+        axleLoad: 'Carga por Eje',
+        frontAxle: 'Eje Delantero',
+        rearAxle: 'Eje Trasero',
+        balance: 'Balance',
+        lrImbalance: 'Desbalance I/D',
+        warnings: 'Advertencias',
+      }
+    : {
+        title: 'Metrics',
+        empty: 'No data yet',
+        totalCargo: 'Total Cargo',
+        maxStackHeight: 'Max Stack Height',
+        axleLoad: 'Axle Load',
+        frontAxle: 'Front Axle',
+        rearAxle: 'Rear Axle',
+        balance: 'Balance',
+        lrImbalance: 'L/R Imbalance',
+        warnings: 'Warnings',
+      };
+
   if (!metrics) {
     return (
       <div className="metrics-panel">
-        <h3>Metrics</h3>
-        <p className="empty-message">No data yet</p>
+        <h3>{t.title}</h3>
+        <p className="empty-message">{t.empty}</p>
       </div>
     );
   }
@@ -26,25 +53,25 @@ export function MetricsPanel({ metrics, truck }: MetricsPanelProps) {
 
   return (
     <div className="metrics-panel">
-      <h3>Metrics</h3>
+      <h3>{t.title}</h3>
       
       <div className="metric-group">
         <div className="metric">
-          <span className="label">Total Cargo</span>
+          <span className="label">{t.totalCargo}</span>
           <span className="value">{metrics.totalWeightKg.toFixed(1)} kg</span>
         </div>
         
         <div className="metric">
-          <span className="label">Max Stack Height</span>
-          <span className="value">{(metrics.maxStackHeightMm / 1000).toFixed(2)} m</span>
+          <span className="label">{t.maxStackHeight}</span>
+          <span className="value">{metrics.maxStackHeightMm.toFixed(0)} mm</span>
         </div>
       </div>
 
       <div className="metric-group">
-        <h4>Axle Load</h4>
+        <h4>{t.axleLoad}</h4>
         
         <div className={`metric ${getStatus(frontPct, 100)}`}>
-          <span className="label">Front Axle</span>
+          <span className="label">{t.frontAxle}</span>
           <div className="bar-container">
             <div className="bar" style={{ width: `${Math.min(frontPct, 100)}%` }} />
           </div>
@@ -52,7 +79,7 @@ export function MetricsPanel({ metrics, truck }: MetricsPanelProps) {
         </div>
         
         <div className={`metric ${getStatus(rearPct, 100)}`}>
-          <span className="label">Rear Axle</span>
+          <span className="label">{t.rearAxle}</span>
           <div className="bar-container">
             <div className="bar" style={{ width: `${Math.min(rearPct, 100)}%` }} />
           </div>
@@ -61,10 +88,10 @@ export function MetricsPanel({ metrics, truck }: MetricsPanelProps) {
       </div>
 
       <div className="metric-group">
-        <h4>Balance</h4>
+        <h4>{t.balance}</h4>
         
         <div className={`metric ${metrics.lrImbalancePercent > (truck?.balance.maxLeftRightPercentDiff || 10) ? 'danger' : 'ok'}`}>
-          <span className="label">L/R Imbalance</span>
+          <span className="label">{t.lrImbalance}</span>
           <span className="value">{metrics.lrImbalancePercent.toFixed(1)}%</span>
         </div>
         
@@ -72,14 +99,14 @@ export function MetricsPanel({ metrics, truck }: MetricsPanelProps) {
           <div className="balance-side">
             <span>L</span>
             <div className="balance-bar">
-              <div style={{ width: `${(metrics.leftWeightKg / metrics.totalWeightKg) * 100}%` }} />
+              <div style={{ width: `${metrics.totalWeightKg > 0 ? (metrics.leftWeightKg / metrics.totalWeightKg) * 100 : 0}%` }} />
             </div>
             <span>{metrics.leftWeightKg.toFixed(0)} kg</span>
           </div>
           <div className="balance-side">
             <span>R</span>
             <div className="balance-bar">
-              <div style={{ width: `${(metrics.rightWeightKg / metrics.totalWeightKg) * 100}%` }} />
+              <div style={{ width: `${metrics.totalWeightKg > 0 ? (metrics.rightWeightKg / metrics.totalWeightKg) * 100 : 0}%` }} />
             </div>
             <span>{metrics.rightWeightKg.toFixed(0)} kg</span>
           </div>
@@ -88,7 +115,7 @@ export function MetricsPanel({ metrics, truck }: MetricsPanelProps) {
 
       {metrics.warnings.length > 0 && (
         <div className="warnings">
-          <h4>⚠️ Warnings</h4>
+          <h4>{t.warnings}</h4>
           <ul>
             {metrics.warnings.map((w, i) => (
               <li key={i}>{w}</li>

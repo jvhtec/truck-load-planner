@@ -78,6 +78,25 @@ export function validatePlacement(
     return { valid: false, violations, details };
   }
 
+  const tiltY = candidate.tilt?.y ?? 0;
+  if ((candidate as any).tilt?.x) {
+    violations.push('INVALID_ORIENTATION');
+    details.orientation = { error: 'Only Y-axis tilt is supported' };
+    return { valid: false, violations, details };
+  }
+  if (tiltY === 90) {
+    if (!sku.tiltAllowed) {
+      violations.push('INVALID_ORIENTATION');
+      details.orientation = { error: 'Tilt not allowed for this SKU' };
+      return { valid: false, violations, details };
+    }
+    if (sku.uprightOnly) {
+      violations.push('INVALID_ORIENTATION');
+      details.orientation = { error: 'Upright-only SKU cannot be tilted' };
+      return { valid: false, violations, details };
+    }
+  }
+
   // 3. Collision with other instances
   // Use spatial index when available to avoid full O(n) scan
   if (ctx.spatialIndex) {

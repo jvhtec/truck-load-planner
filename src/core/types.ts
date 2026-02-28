@@ -42,6 +42,7 @@ export interface CaseSKU {
   // Orientation constraints
   uprightOnly: boolean;          // height must remain Z
   allowedYaw: Yaw[];             // permitted rotations
+  tiltAllowed?: boolean;         // allow 90deg side tilt on Y axis
   
   // Stacking constraints
   canBeBase: boolean;            // can other cases rest on top?
@@ -62,6 +63,7 @@ export interface CaseSKU {
 export interface CaseInstance {
   id: string;
   skuId: string;
+  staged?: boolean;
   
   // Position of front-left-bottom corner
   position: Vec3;
@@ -69,10 +71,9 @@ export interface CaseInstance {
   // Rotation around Z axis
   yaw: Yaw;
 
-  // Visual tilt controls in degrees (does not change collision AABB)
+  // Discrete 90-degree side tilt on Y axis only.
   tilt?: {
-    x: number;
-    y: number;
+    y: 0 | 90;
   };
   
   // Computed AABB (cached)

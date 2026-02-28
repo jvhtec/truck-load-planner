@@ -34,11 +34,42 @@ export function getRotatedDims(dims: Vec3, yaw: Yaw): Vec3 {
 }
 
 export function computeAABB(sku: CaseSKU, position: Vec3, yaw: Yaw): AABB {
-  const rotated = getRotatedDims(
+  const rotated = getOrientedDims(
     { x: sku.dims.l, y: sku.dims.w, z: sku.dims.h },
-    yaw
+    yaw,
   );
   return createAABB(position, rotated);
+}
+
+export function getOrientedDims(
+  dims: Vec3,
+  yaw: Yaw,
+  tilt?: { y: 0 | 90 }
+): Vec3 {
+  const yawRotated = getRotatedDims(dims, yaw);
+  if (!tilt || tilt.y === 0) {
+    return yawRotated;
+  }
+
+  // Y tilt swaps length/height.
+  if (tilt.y === 90) {
+    return { x: yawRotated.z, y: yawRotated.y, z: yawRotated.x };
+  }
+  return yawRotated;
+}
+
+export function computeOrientedAABB(
+  sku: CaseSKU,
+  position: Vec3,
+  yaw: Yaw,
+  tilt?: { y: 0 | 90 }
+): AABB {
+  const oriented = getOrientedDims(
+    { x: sku.dims.l, y: sku.dims.w, z: sku.dims.h },
+    yaw,
+    tilt
+  );
+  return createAABB(position, oriented);
 }
 
 // ============================================================================
@@ -112,6 +143,7 @@ export function createInstance(
     skuId: sku.skuId,
     position: { ...position },
     yaw,
-    aabb: computeAABB(sku, position, yaw),
+    tilt: { y: 0 },
+    aabb: computeOrientedAABB(sku, position, yaw),
   };
 }
