@@ -8,6 +8,10 @@ import { MetricsPanel } from './components/MetricsPanel';
 import { usePlanner } from './hooks/usePlanner';
 import type { SavedPlan } from './hooks/usePlanner';
 import type { CaseInstance, Yaw } from './core/types';
+import { computeOrientedAABB } from './core/geometry';
+import { SpatialIndex } from './core/spatial';
+import { SupportGraph } from './core/support';
+import { validatePlacement } from './core/validate';
 import './App.css';
 import { buildStackClass, formatCaseCsv, parseCaseCsv, sanitizeSkuId } from './lib/caseCsv';
 
@@ -23,6 +27,10 @@ function centerY(inst: CaseInstance): number {
 
 function bucket(value: number): number {
   return Math.round(value / ORDER_BUCKET_MM);
+}
+
+function normalizeTilt(input?: { y?: number } | null): { y: 0 | 90 } {
+  return input?.y === 90 ? { y: 90 } : { y: 0 };
 }
 
 function buildItemNumberMap(instances: CaseInstance[]): Map<string, number> {
@@ -346,41 +354,52 @@ function App() {
     if (!moving) return requested;
 
     const movingSku = state.skus.get(moving.skuId);
-    const minSupport = movingSku?.minSupportRatio ?? 0.75;
+    if (!movingSku) return requested;
     const dx = moving.aabb.max.x - moving.aabb.min.x;
     const dy = moving.aabb.max.y - moving.aabb.min.y;
     const dz = moving.aabb.max.z - moving.aabb.min.z;
-    const footprint = Math.max(1, dx * dy);
+    const normalizedTilt = normalizeTilt(moving.tilt);
 
     const x = Math.max(0, Math.min(Math.round(requested.x), state.truck.innerDims.x - dx));
     const y = Math.max(0, Math.min(Math.round(requested.y), state.truck.innerDims.y - dy));
+    const placedWithoutCurrent = state.instances.filter(i => i.id !== instanceId && !i.staged);
 
-    const overlapWithCandidate = (other: typeof moving) => {
-      const ox = Math.max(0, Math.min(x + dx, other.aabb.max.x) - Math.max(x, other.aabb.min.x));
-      const oy = Math.max(0, Math.min(y + dy, other.aabb.max.y) - Math.max(y, other.aabb.min.y));
-      return ox * oy;
-    };
+    const skuWeights = new Map<string, number>();
+    state.skus.forEach((sku, id) => skuWeights.set(id, sku.weightKg));
+    const supportGraph = new SupportGraph(skuWeights);
+    const spatialIndex = new SpatialIndex();
+    for (const inst of placedWithoutCurrent) {
+      supportGraph.addInstance(inst, placedWithoutCurrent);
+      spatialIndex.add(inst.id, inst.aabb);
+    }
 
-    const supportCandidates = state.instances
-      .filter(i => i.id !== instanceId && !i.staged)
-      .map(i => ({ inst: i, sku: state.skus.get(i.skuId), overlap: overlapWithCandidate(i) }))
-      .filter(v => v.overlap > 0 && v.sku?.canBeBase && v.sku?.topContactAllowed);
+    const zLevels = Array.from(new Set([0, ...placedWithoutCurrent.map(v => v.aabb.max.z)])).sort((a, b) => b - a);
+    for (const z of zLevels) {
+      if (z + dz > state.truck.innerDims.z) continue;
 
-    const topLevels = Array.from(new Set(supportCandidates.map(v => v.inst.aabb.max.z))).sort((a, b) => b - a);
+      const position = { x, y, z };
+      const candidate: CaseInstance = {
+        ...moving,
+        position,
+        tilt: normalizedTilt,
+        staged: false,
+        aabb: computeOrientedAABB(movingSku, position, moving.yaw, normalizedTilt),
+      };
 
-    let z = 0;
-    for (const top of topLevels) {
-      if (top + dz > state.truck.innerDims.z) continue;
-      const supportArea = supportCandidates
-        .filter(v => v.inst.aabb.max.z === top)
-        .reduce((sum, v) => sum + v.overlap, 0);
-      if (supportArea / footprint >= minSupport) {
-        z = top;
-        break;
+      const validation = validatePlacement(candidate, {
+        truck: state.truck,
+        skus: state.skus,
+        instances: placedWithoutCurrent,
+        supportGraph,
+        skuWeights,
+        spatialIndex,
+      });
+      if (validation.valid) {
+        return position;
       }
     }
 
-    return { x, y, z };
+    return { x, y, z: 0 };
   };
 
   const waitForRender = async () => {

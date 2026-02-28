@@ -361,6 +361,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
   tiltLabel: string;
 }) {
   const [draftPosition, setDraftPosition] = useState<{ x: number; y: number; z: number } | null>(null);
+  const draftPositionRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const isDragging = useRef(false);
   const dragOffset = useRef(new Vector3());
   const dragPlane = useRef(new Plane());
@@ -415,6 +416,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
     isDragging.current = false;
     moved.current = false;
     pointerId.current = null;
+    draftPositionRef.current = null;
     cancelLongPress();
   };
 
@@ -451,6 +453,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
     }
     isDragging.current = true;
     moved.current = false;
+    draftPositionRef.current = null;
   };
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
@@ -463,6 +466,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
     const raw = toClampedPosition(center);
     const snapped = onPreviewPosition(raw);
     moved.current = true;
+    draftPositionRef.current = snapped;
     setDraftPosition(snapped);
   };
 
@@ -474,14 +478,17 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
       const pointerTarget = e.target as Element & { releasePointerCapture: (id: number) => void };
       pointerTarget.releasePointerCapture(pointerId.current);
     }
-    if (moved.current && draftPosition) {
-      const applied = onDrop(draftPosition);
+    const latestDraft = draftPositionRef.current ?? draftPosition;
+    if (moved.current && latestDraft) {
+      const applied = onDrop(latestDraft);
       if (!applied) {
+        draftPositionRef.current = null;
         setDraftPosition(null);
       }
     } else {
       onToggleSelect();
     }
+    draftPositionRef.current = null;
     setDraftPosition(null);
     clearDrag();
   };
@@ -565,15 +572,17 @@ function MeterGuides({ truck, truckDims }: { truck: TruckType; truckDims: { x: n
       {Array.from({ length: xMeters + 1 }, (_, i) => {
         const x = i * meterStepMm * SCALE;
         return (
-          <group key={`mx-${i}`} position={[x, 0.01, -0.06]}>
+          <group key={`mx-${i}`} position={[x, 0.015, -0.09]}>
             <mesh>
-              <boxGeometry args={[0.006, 0.02, 0.05]} />
-              <meshStandardMaterial color="#64748b" />
+              <boxGeometry args={[0.014, 0.05, 0.09]} />
+              <meshStandardMaterial color="#e2e8f0" emissive="#e2e8f0" emissiveIntensity={0.3} />
             </mesh>
             <Text
-              position={[0, 0.04, 0]}
-              fontSize={0.06}
-              color="#94a3b8"
+              position={[0, 0.075, 0]}
+              fontSize={0.11}
+              color="#f8fafc"
+              outlineWidth={0.007}
+              outlineColor="#0f172a"
               anchorX="center"
               anchorY="middle"
             >
@@ -585,16 +594,18 @@ function MeterGuides({ truck, truckDims }: { truck: TruckType; truckDims: { x: n
       {Array.from({ length: yMeters + 1 }, (_, i) => {
         const z = i * meterStepMm * SCALE;
         return (
-          <group key={`my-${i}`} position={[-0.06, 0.01, z]}>
+          <group key={`my-${i}`} position={[-0.09, 0.015, z]}>
             <mesh>
-              <boxGeometry args={[0.05, 0.02, 0.006]} />
-              <meshStandardMaterial color="#64748b" />
+              <boxGeometry args={[0.09, 0.05, 0.014]} />
+              <meshStandardMaterial color="#e2e8f0" emissive="#e2e8f0" emissiveIntensity={0.3} />
             </mesh>
             <Text
-              position={[0, 0.04, 0]}
+              position={[0, 0.075, 0]}
               rotation={[0, Math.PI / 2, 0]}
-              fontSize={0.06}
-              color="#94a3b8"
+              fontSize={0.11}
+              color="#f8fafc"
+              outlineWidth={0.007}
+              outlineColor="#0f172a"
               anchorX="center"
               anchorY="middle"
             >
@@ -604,10 +615,10 @@ function MeterGuides({ truck, truckDims }: { truck: TruckType; truckDims: { x: n
         );
       })}
 
-      <Text position={[truckDims.x / 2, 0.08, -0.11]} fontSize={0.07} color="#cbd5e1" anchorX="center" anchorY="middle">
+      <Text position={[truckDims.x / 2, 0.1, -0.16]} fontSize={0.1} color="#f8fafc" outlineWidth={0.006} outlineColor="#0f172a" anchorX="center" anchorY="middle">
         m
       </Text>
-      <Text position={[-0.11, 0.08, truckDims.y / 2]} rotation={[0, Math.PI / 2, 0]} fontSize={0.07} color="#cbd5e1" anchorX="center" anchorY="middle">
+      <Text position={[-0.16, 0.1, truckDims.y / 2]} rotation={[0, Math.PI / 2, 0]} fontSize={0.1} color="#f8fafc" outlineWidth={0.006} outlineColor="#0f172a" anchorX="center" anchorY="middle">
         m
       </Text>
     </>
