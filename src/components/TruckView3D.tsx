@@ -190,6 +190,8 @@ function Scene({ truck, instances, skus, metrics, showSpatialMetrics, itemNumber
         <meshStandardMaterial color="#1e293b" transparent opacity={0.5} />
       </mesh>
 
+      <MeterGuides truck={truck} truckDims={truckDims} />
+
       {metrics && showSpatialMetrics && (
         <>
           {(() => {
@@ -523,6 +525,66 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
         </lineSegments>
       )}
     </mesh>
+  );
+}
+
+
+function MeterGuides({ truck, truckDims }: { truck: TruckType; truckDims: { x: number; y: number; z: number } }) {
+  const meterStepMm = 1000;
+  const xMeters = Math.floor(truck.innerDims.x / meterStepMm);
+  const yMeters = Math.floor(truck.innerDims.y / meterStepMm);
+
+  return (
+    <>
+      {Array.from({ length: xMeters + 1 }, (_, i) => {
+        const x = i * meterStepMm * SCALE;
+        return (
+          <group key={`mx-${i}`} position={[x, 0.01, -0.06]}>
+            <mesh>
+              <boxGeometry args={[0.006, 0.02, 0.05]} />
+              <meshStandardMaterial color="#64748b" />
+            </mesh>
+            <Text
+              position={[0, 0.04, 0]}
+              fontSize={0.06}
+              color="#94a3b8"
+              anchorX="center"
+              anchorY="middle"
+            >
+              {String(i)}
+            </Text>
+          </group>
+        );
+      })}
+      {Array.from({ length: yMeters + 1 }, (_, i) => {
+        const z = i * meterStepMm * SCALE;
+        return (
+          <group key={`my-${i}`} position={[-0.06, 0.01, z]}>
+            <mesh>
+              <boxGeometry args={[0.05, 0.02, 0.006]} />
+              <meshStandardMaterial color="#64748b" />
+            </mesh>
+            <Text
+              position={[0, 0.04, 0]}
+              rotation={[0, Math.PI / 2, 0]}
+              fontSize={0.06}
+              color="#94a3b8"
+              anchorX="center"
+              anchorY="middle"
+            >
+              {String(i)}
+            </Text>
+          </group>
+        );
+      })}
+
+      <Text position={[truckDims.x / 2, 0.08, -0.11]} fontSize={0.07} color="#cbd5e1" anchorX="center" anchorY="middle">
+        m
+      </Text>
+      <Text position={[-0.11, 0.08, truckDims.y / 2]} rotation={[0, Math.PI / 2, 0]} fontSize={0.07} color="#cbd5e1" anchorX="center" anchorY="middle">
+        m
+      </Text>
+    </>
   );
 }
 
