@@ -116,7 +116,7 @@ function App() {
         clearAll: 'Limpiar Todo',
         autoPack: 'Auto Carga',
         autoPackQty: 'Cantidades Auto Carga',
-        exportCasesCsv: 'Exportar Casos (CSV)',
+        exportCasesCsv: 'Exportar Cases (CSV)',
         importCasesCsv: 'Importar Cases (CSV/XLSX*)',
         importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
         importCasesFailed: 'Error al importar casos',
