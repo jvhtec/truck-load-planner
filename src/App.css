@@ -853,6 +853,11 @@ body {
   grid-template-columns: 1fr;
 }
 
+/* Desktop: hide sidebar when collapsed */
+.sidebar.desktop-hidden {
+  display: none;
+}
+
 .placed-items {
   margin-top: 1rem;
   border-top: 1px solid var(--border-color);
@@ -963,7 +968,20 @@ body {
   flex: 0 0 auto;
 }
 
+/* Mobile elements hidden on desktop */
 .mobile-drop-hint {
+  display: none;
+}
+
+.mobile-menu-btn {
+  display: none;
+}
+
+.mobile-tab-bar {
+  display: none;
+}
+
+.mobile-menu-overlay {
   display: none;
 }
 
@@ -1029,64 +1047,355 @@ body {
 }
 
 @media (max-width: 960px) {
+  /* ─── Mobile Header ─── */
   .app-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.75rem;
+    flex-direction: row;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    gap: 0;
   }
 
+  .app-header h1 {
+    font-size: 1rem;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Hide desktop header actions on mobile */
   .header-actions {
-    flex-wrap: wrap;
+    display: none;
   }
 
+  /* Show mobile hamburger menu button */
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* ─── Mobile Menu Overlay (action sheet) ─── */
+  .mobile-menu-overlay {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    background: rgba(0, 0, 0, 0.5);
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  .mobile-menu-sheet {
+    width: 100%;
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-color);
+    border-radius: 1rem 1rem 0 0;
+    padding: 0.5rem 0 calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+    animation: slideUp 0.2s ease-out;
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  .mobile-menu-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .mobile-menu-header button {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: var(--bg-hover);
+    border-radius: 50%;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    cursor: pointer;
+  }
+
+  .mobile-menu-items {
+    display: flex;
+    flex-direction: column;
+    padding: 0.25rem 0.75rem;
+  }
+
+  .mobile-menu-items button {
+    width: 100%;
+    text-align: left;
+    padding: 0.85rem 0.75rem;
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    border-radius: 0.5rem;
+  }
+
+  .mobile-menu-items button:active {
+    background: var(--bg-hover);
+  }
+
+  .mobile-menu-items button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ─── Tab-based Main Layout ─── */
   .app-main,
   .app-main.left-collapsed,
   .app-main.right-collapsed,
   .app-main.left-collapsed.right-collapsed {
     grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    overflow: hidden;
   }
 
+  /* Override desktop-hidden on mobile — always render for tab navigation */
+  .sidebar.desktop-hidden {
+    display: none;
+  }
+
+  /* Hide all panels by default, show only the active tab */
+  .app-main .sidebar.left,
+  .app-main .main-view,
+  .app-main .sidebar.right {
+    display: none;
+  }
+
+  /* Show the active panel based on data-mobile-tab */
+  .app-main[data-mobile-tab="trucks"] .sidebar.left {
+    display: block;
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .app-main[data-mobile-tab="view"] .main-view {
+    display: block;
+  }
+
+  .app-main[data-mobile-tab="cases"] .sidebar.right {
+    display: block;
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  /* Full height for the active panel */
   .sidebar {
-    max-height: 40vh;
+    max-height: none;
   }
 
   .main-view {
-    min-height: 45vh;
-  }
-
-  .view-controls {
-    max-width: calc(100% - 1.5rem);
-  }
-
-  .metrics-overlay {
-    width: min(340px, calc(100% - 1.5rem));
+    min-height: 0;
+    height: 100%;
   }
 
   .truck-view-3d {
-    min-height: 45vh;
+    min-height: 100%;
+    height: 100%;
   }
 
+  /* ─── Bottom Tab Bar ─── */
+  .mobile-tab-bar {
+    display: flex;
+    position: relative;
+    z-index: 50;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-color);
+    padding: 0.25rem 0 calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
+    flex-shrink: 0;
+  }
+
+  .mobile-tab-bar button {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.5rem 0.25rem;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.65rem;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .mobile-tab-bar button.active {
+    color: var(--accent-blue);
+  }
+
+  .mobile-tab-bar button svg {
+    flex-shrink: 0;
+  }
+
+  /* ─── View Controls refinement ─── */
+  .view-controls {
+    max-width: calc(100% - 1rem);
+    top: 0.5rem;
+    left: 0.5rem;
+    gap: 0.3rem;
+  }
+
+  .view-controls button {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.65rem;
+  }
+
+  /* ─── Metrics Overlay ─── */
+  .metrics-overlay {
+    width: min(300px, calc(100% - 1rem));
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+
+  /* ─── Input refinements ─── */
   .position-inputs {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .position-inputs.compact {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
   }
 
+  .position-inputs input,
+  .quantity-inputs input {
+    padding: 0.6rem 0.5rem;
+    font-size: 1rem;
+    -webkit-appearance: none;
+  }
+
+  /* ─── Placed Items ─── */
   .placed-list {
-    max-height: 240px;
+    max-height: none;
   }
 
   .placed-card {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.2rem;
+    padding: 0.55rem 0.6rem;
+    font-size: 0.78rem;
+    min-height: 44px;
+    align-items: center;
   }
 
   .mobile-drop-hint {
     display: inline;
     font-size: 0.65rem;
     color: var(--text-secondary);
+  }
+
+  /* ─── Selected Instance ─── */
+  .selected-instance {
+    padding: 0.85rem;
+  }
+
+  .selected-instance button {
+    min-height: 44px;
+    font-size: 0.85rem;
+  }
+
+  /* ─── Yaw / Tilt buttons ─── */
+  .yaw-buttons button {
+    min-height: 44px;
+    font-size: 0.8rem;
+  }
+
+  /* ─── Dialogs ─── */
+  .dialog {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 2rem);
+    border-radius: 0.75rem;
+  }
+
+  .dialog-actions button {
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  /* ─── Sidebar spacing on mobile ─── */
+  .sidebar {
+    padding: 0.75rem;
+    padding-bottom: 1rem;
+  }
+
+  /* ─── Case Catalog ─── */
+  .case-list {
+    max-height: none;
+  }
+
+  .case-card {
+    padding: 0.85rem;
+    min-height: 44px;
+  }
+
+  /* ─── Truck Selector ─── */
+  .truck-card {
+    padding: 0.85rem;
+    min-height: 44px;
+  }
+
+  /* ─── Auto Pack Section ─── */
+  .auto-pack-section {
+    margin-top: 1rem;
+  }
+
+  .quantity-inputs label {
+    font-size: 0.85rem;
+    padding: 0.25rem 0;
+  }
+
+  /* ─── Staged actions ─── */
+  .staged-actions button {
+    min-height: 44px;
+    font-size: 0.85rem;
+  }
+
+  .place-button,
+  .danger-button {
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  /* ─── Validation Error ─── */
+  .validation-error {
+    bottom: 0.5rem;
+    left: 0.5rem;
+    right: 0.5rem;
+    max-width: none;
+  }
+}
+
+/* ─── Light theme mobile overrides ─── */
+@media (max-width: 960px) {
+  .app.theme-light .mobile-menu-btn {
+    background: var(--bg-hover);
+    border-color: var(--border-color);
+  }
+
+  .app.theme-light .mobile-menu-sheet {
+    background: var(--bg-card);
+  }
+
+  .app.theme-light .mobile-tab-bar {
+    background: var(--bg-card);
   }
 }
