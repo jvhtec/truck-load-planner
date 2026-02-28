@@ -344,6 +344,8 @@ function App() {
       labelFontClear: 'Limpio',
       labelFontHandwritten: 'Manuscrito',
       labelNotes: 'Contenido / Notas',
+      labelSavePdf: 'Guardar PDF',
+      labelNoContainers: 'No hay cajas tipo Contenedor en el plan. Marca cajas como Contenedor en el catalogo para agregar notas de contenido.',
       labelTruck: 'Camion',
       labelDate: 'Fecha',
       labelPrint: 'Imprimir Etiquetas',
@@ -462,6 +464,8 @@ function App() {
       labelFontClear: 'Clean',
       labelFontHandwritten: 'Handwritten',
       labelNotes: 'Contents / Notes',
+      labelSavePdf: 'Save PDF',
+      labelNoContainers: 'No container cases in plan. Mark cases as Container in the catalog to add contents notes.',
       labelTruck: 'Truck',
       labelDate: 'Date',
       labelPrint: 'Print Labels',
@@ -775,7 +779,7 @@ function App() {
     }
   };
 
-  const printCaseLabels = () => {
+  const printCaseLabels = (mode: 'print' | 'pdf' = 'print') => {
     if (!state.truck || placedInstances.length === 0) return;
     const sorted = [...placedInstances].sort(
       (a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999)
@@ -797,9 +801,9 @@ function App() {
       const weight = sku ? `${sku.weightKg} kg` : '\u2013';
       const note = caseLabelsNotes[inst.id] ?? '';
       const nameLen = name.length;
-      const nameFontSize = nameLen <= 8 ? '18pt' : nameLen <= 14 ? '15pt' : nameLen <= 20 ? '12pt' : nameLen <= 28 ? '10pt' : '8.5pt';
-      const skuFontSize = inst.skuId.length <= 12 ? '9pt' : inst.skuId.length <= 18 ? '8pt' : '7pt';
-      const rowFontSize = nameLen <= 8 ? '10pt' : nameLen <= 14 ? '9.5pt' : '8.5pt';
+      const nameFontSize = nameLen <= 8 ? '22pt' : nameLen <= 14 ? '19pt' : nameLen <= 20 ? '15pt' : nameLen <= 28 ? '13pt' : '11pt';
+      const skuFontSize = inst.skuId.length <= 12 ? '11pt' : inst.skuId.length <= 18 ? '10pt' : '9pt';
+      const rowFontSize = nameLen <= 8 ? '12pt' : nameLen <= 14 ? '11pt' : '10pt';
       return `
         <div class="label">
           <div class="label-header" style="background:${color};">
@@ -830,7 +834,7 @@ function App() {
       .grid { display: grid; grid-template-columns: repeat(2, 105mm); width: 210mm; }
       .label { width: 105mm; height: 74.25mm; border: 0.5pt solid #d1d5db; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
       .label-header { padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 2.5mm; flex-shrink: 0; height: 22mm; }
-      .label-logo { height: 14mm; width: auto; object-fit: contain; flex-shrink: 0; }
+      .label-logo { max-height: 14mm; max-width: 55mm; width: auto; height: auto; object-fit: contain; flex-shrink: 0; }
       .label-num { font-size: 30pt; font-weight: 900; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); line-height: 1; margin-left: auto; }
       .label-body { padding: 2mm 3.5mm; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 0.5mm; }
       .label-name { font-weight: 900; line-height: 1.15; word-break: break-word; }
@@ -845,7 +849,13 @@ function App() {
   </body>
 </html>`;
 
-    openPrintWindow(html);
+    if (mode === 'pdf') {
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } else {
+      openPrintWindow(html);
+    }
     setShowCaseLabelsDialog(false);
   };
 
@@ -1304,6 +1314,7 @@ function App() {
                 maxLoadAboveKg: updates.maxLoadAboveKg,
                 minSupportRatio: updates.minSupportRatio,
                 stackClass: updates.stackClass,
+                isContainer: updates.isContainer,
               });
             }}
             onDeleteCase={actions.deleteCase}
@@ -1638,9 +1649,14 @@ function App() {
             <div className="cl-section cl-notes-section">
               <div className="cl-section-label">{t.labelNotes}</div>
               <div className="cl-notes-list">
-                {[...placedInstances]
-                  .sort((a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999))
-                  .map((inst) => {
+                {(() => {
+                  const containerInsts = [...placedInstances]
+                    .sort((a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999))
+                    .filter((inst) => state.skus.get(inst.skuId)?.isContainer === true);
+                  if (containerInsts.length === 0) {
+                    return <p className="cl-no-containers">{t.labelNoContainers}</p>;
+                  }
+                  return containerInsts.map((inst) => {
                     const sku = state.skus.get(inst.skuId);
                     const num = itemNumbers.get(inst.id) ?? '?';
                     return (
@@ -1657,13 +1673,15 @@ function App() {
                         />
                       </div>
                     );
-                  })}
+                  });
+                })()}
               </div>
             </div>
 
             <div className="dialog-actions">
               <button onClick={() => setShowCaseLabelsDialog(false)}>{t.cancel}</button>
-              <button className="primary" onClick={printCaseLabels}>🖨 {t.labelPrint}</button>
+              <button onClick={() => printCaseLabels('pdf')}>📄 {t.labelSavePdf}</button>
+              <button className="primary" onClick={() => printCaseLabels('print')}>🖨 {t.labelPrint}</button>
             </div>
           </div>
         </div>

@@ -26,6 +26,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
   const [editMaxLoadAboveKg, setEditMaxLoadAboveKg] = useState(0);
   const [editMinSupportRatio, setEditMinSupportRatio] = useState(0.75);
   const [editStackClass, setEditStackClass] = useState('');
+  const [editIsContainer, setEditIsContainer] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -57,6 +58,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
         stackable: 'Apilable (Base Permitida)',
         topContact: 'Contacto Superior Permitido',
         tiltAllowed: 'Inclinacion Permitida (Y 90°)',
+        isContainer: 'Contenedor (puede tener contenido)',
         save: 'Guardar Propiedades',
         saving: 'Guardando...',
         delete: 'Eliminar Tipo de Caja',
@@ -93,6 +95,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
         stackable: 'Stackable (Can Be Base)',
         topContact: 'Top Contact Allowed',
         tiltAllowed: 'Tilt Allowed (Y 90°)',
+        isContainer: 'Container (has loose contents)',
         save: 'Save Case Properties',
         saving: 'Saving...',
         delete: 'Delete Case Type',
@@ -106,7 +109,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
   const selectedCase = cases.find(c => c.skuId === selectedSku);
 
   useEffect(() => {
-    if (!selectedCase) return;
+    if (!selectedCase || !editOpen) return;
     setEditName(selectedCase.name);
     setEditColor(selectedCase.color ?? '#6366f1');
     setEditDims(selectedCase.dims);
@@ -124,7 +127,8 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
     setEditMaxLoadAboveKg(selectedCase.maxLoadAboveKg);
     setEditMinSupportRatio(selectedCase.minSupportRatio);
     setEditStackClass(selectedCase.stackClass ?? '');
-  }, [selectedCase?.skuId]);
+    setEditIsContainer(selectedCase.isContainer === true);
+  }, [selectedCase, editOpen]);
 
   const getPreferredYaw = (sku: CaseSKU): Yaw => {
     if (sku.allowedYaw.includes(0)) return 0;
@@ -159,6 +163,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                   {!c.canBeBase && <span className="tag no-stack">{t.noStack}</span>}
                   {c.uprightOnly && <span className="tag upright">{t.upright}</span>}
                   {c.tiltAllowed && <span className="tag upright">{t.tilt}</span>}
+                  {c.isContainer === true && <span className="tag container">{t.isContainer}</span>}
                 </div>
               </button>
               <div className="case-card-actions">
@@ -246,6 +251,10 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                 />
                 <span>{t.tiltAllowed}</span>
               </label>
+              <label className="toggle-input">
+                <input type="checkbox" checked={editIsContainer} onChange={(e) => setEditIsContainer(e.target.checked)} />
+                <span>{t.isContainer}</span>
+              </label>
             </div>
             <button
               className="place-button"
@@ -271,6 +280,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                     maxLoadAboveKg: editMaxLoadAboveKg,
                     minSupportRatio: editMinSupportRatio,
                     stackClass: editStackClass || undefined,
+                    isContainer: editIsContainer,
                   });
                   setEditOpen(false);
                 } catch (err: any) {

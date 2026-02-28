@@ -53,6 +53,7 @@ interface DbCaseSku {
   stack_class: string | null;
   color_hex: string | null;
   tilt_allowed: boolean | null;
+  is_container: boolean | string | number | null;
 }
 
 interface DbLoadPlan {
@@ -88,6 +89,18 @@ function dbToTruck(db: DbTruck): TruckType {
   };
 }
 
+function parseDbBoolean(value: unknown): boolean {
+  if (value === true || value === false) return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === 't' || normalized === '1' || normalized === 'yes' || normalized === 'y') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function dbToCaseSku(db: DbCaseSku): CaseSKU {
   return {
     skuId: db.sku_id,
@@ -107,6 +120,7 @@ function dbToCaseSku(db: DbCaseSku): CaseSKU {
     stackClass: db.stack_class || undefined,
     color: db.color_hex || undefined,
     tiltAllowed: db.tilt_allowed ?? false,
+    isContainer: parseDbBoolean(db.is_container),
   };
 }
 
@@ -163,6 +177,7 @@ interface CreateCaseInput {
   stackClass?: string;
   color?: string;
   tiltAllowed?: boolean;
+  isContainer?: boolean;
 }
 
 const AUTOPLACE_STEP_MM = 100;
@@ -907,6 +922,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       min_support_ratio: input.minSupportRatio,
       stack_class: input.stackClass || null,
       color_hex: input.color || null,
+      is_container: input.isContainer ?? false,
     });
 
     if (error) throw error;
@@ -926,6 +942,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         minSupportRatio: input.minSupportRatio,
         stackClass: input.stackClass,
         color: input.color,
+        isContainer: input.isContainer ?? false,
       };
       const cases = [created, ...prev.cases];
       const skus = new Map(prev.skus);
@@ -952,39 +969,25 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     if (updates.minSupportRatio !== undefined) payload.min_support_ratio = updates.minSupportRatio;
     if (updates.stackClass !== undefined) payload.stack_class = updates.stackClass || null;
     if (updates.color !== undefined) payload.color_hex = updates.color || null;
+    if (updates.isContainer !== undefined) payload.is_container = updates.isContainer;
 
     const { data, error } = await supabase
       .from('case_skus')
       .update(payload)
       .eq('sku_id', skuId)
-      .select('sku_id');
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
-    if (!data || data.length === 0) {
+    if (!data) {
       throw new Error(`No case row updated for sku_id=${skuId}. Check RLS policy and table grants.`);
     }
+    const updated = dbToCaseSku(data as DbCaseSku);
 
     setState(prev => {
-      const existing = prev.skus.get(skuId);
-      if (!existing) return prev;
-      const updated: CaseSKU = {
-        ...existing,
-        ...(updates.name !== undefined ? { name: updates.name } : {}),
-        ...(updates.weightKg !== undefined ? { weightKg: updates.weightKg } : {}),
-        ...(updates.uprightOnly !== undefined ? { uprightOnly: updates.uprightOnly } : {}),
-        ...(updates.allowedYaw !== undefined ? { allowedYaw: updates.allowedYaw } : {}),
-        ...(updates.canBeBase !== undefined ? { canBeBase: updates.canBeBase } : {}),
-        ...(updates.tiltAllowed !== undefined ? { tiltAllowed: updates.tiltAllowed } : {}),
-        ...(updates.topContactAllowed !== undefined ? { topContactAllowed: updates.topContactAllowed } : {}),
-        ...(updates.maxLoadAboveKg !== undefined ? { maxLoadAboveKg: updates.maxLoadAboveKg } : {}),
-        ...(updates.minSupportRatio !== undefined ? { minSupportRatio: updates.minSupportRatio } : {}),
-        ...(updates.stackClass !== undefined ? { stackClass: updates.stackClass } : {}),
-        ...(updates.color !== undefined ? { color: updates.color } : {}),
-        ...(updates.dims ? { dims: updates.dims } : {}),
-      };
-
+      if (!prev.skus.has(skuId)) return prev;
       const cases = prev.cases.map(c => (c.skuId === skuId ? updated : c));
       const skus = new Map(prev.skus);
-      skus.set(skuId, updated);
+      skus.set(updated.skuId, updated);
       return { ...prev, cases, skus };
     });
   }, []);

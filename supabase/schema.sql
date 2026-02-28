@@ -67,6 +67,7 @@ create table if not exists case_skus (
   -- Optional classification
   stack_class text,
   color_hex text,
+  is_container boolean not null default false,
   
   created_at timestamptz default now(),
   updated_at timestamptz default now()
