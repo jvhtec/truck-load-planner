@@ -815,27 +815,30 @@ function App() {
     <title>${t.caseLabelsTitle}</title>
     ${fontLink}
     <style>
-      body { font-family: ${bodyFont}; margin: 16px; color: #111827; }
-      h1 { margin: 0 0 4px; font-size: 18px; }
-      .meta { margin-bottom: 16px; color: #374151; font-size: 12px; }
-      .grid { display: flex; flex-wrap: wrap; gap: 12px; }
-      .label { width: 220px; border: 2px solid #d1d5db; border-radius: 8px; overflow: hidden; break-inside: avoid; }
-      .label-header { padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
-      .label-logo { height: 32px; width: auto; object-fit: contain; }
-      .label-num { font-size: 38px; font-weight: 900; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); line-height: 1; margin-left: auto; }
-      .label-body { padding: 10px 12px; }
-      .label-name { font-size: 15px; font-weight: 700; margin-bottom: 2px; word-break: break-word; }
-      .label-sku { font-size: 11px; color: #6b7280; margin-bottom: 8px; font-family: monospace; }
-      .label-row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; }
+      @page { size: A4 portrait; margin: 0; }
+      * { box-sizing: border-box; }
+      body { font-family: ${bodyFont}; margin: 0; color: #111827; }
+      .screen-header { padding: 10px 14px; font-family: Segoe UI, Arial, sans-serif; border-bottom: 1px solid #e5e7eb; }
+      .screen-header h1 { margin: 0 0 2px; font-size: 15px; }
+      .screen-header .meta { color: #6b7280; font-size: 11px; }
+      .grid { display: grid; grid-template-columns: repeat(2, 105mm); width: 210mm; }
+      .label { width: 105mm; height: 74.25mm; border: 0.5pt solid #d1d5db; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
+      .label-header { padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 2.5mm; flex-shrink: 0; height: 20mm; }
+      .label-logo { height: 12mm; width: auto; object-fit: contain; flex-shrink: 0; }
+      .label-num { font-size: 26pt; font-weight: 900; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.45); line-height: 1; margin-left: auto; }
+      .label-body { padding: 2mm 3.5mm; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      .label-name { font-size: 10pt; font-weight: 700; line-height: 1.2; word-break: break-word; margin-bottom: 0.5mm; }
+      .label-sku { font-size: 7pt; color: #6b7280; font-family: monospace; margin-bottom: 1.5mm; }
+      .label-row { display: flex; justify-content: space-between; font-size: 7.5pt; margin-top: 0.8mm; }
       .label-key { color: #6b7280; }
-      .label-note { margin-top: 8px; font-size: 12px; color: #374151; border-top: 1px solid #e5e7eb; padding-top: 6px; white-space: pre-wrap; word-break: break-word; }
-      @media print { body { margin: 8mm; } .grid { gap: 8px; } }
+      .label-note { margin-top: 1.5mm; font-size: 7.5pt; color: #374151; border-top: 0.5pt solid #e5e7eb; padding-top: 1.5mm; white-space: pre-wrap; word-break: break-word; flex: 1; overflow: hidden; }
+      @media print { .screen-header { display: none; } }
     </style>
   </head>
   <body>
-    <h1>${t.caseLabelsTitle}</h1>
-    <div class="meta">
-      ${t.labelTruck}: ${state.truck.name} | ${t.labelDate}: ${new Date().toLocaleString(lang === 'es' ? 'es-ES' : 'en-US')} | ${t.reportItems}: ${placedInstances.length}
+    <div class="screen-header">
+      <h1>${t.caseLabelsTitle}</h1>
+      <div class="meta">${t.labelTruck}: ${state.truck.name} &nbsp;|&nbsp; ${t.labelDate}: ${new Date().toLocaleString(lang === 'es' ? 'es-ES' : 'en-US')} &nbsp;|&nbsp; ${t.reportItems}: ${placedInstances.length} &nbsp;|&nbsp; A4 · 8 ${lang === 'es' ? 'por hoja' : 'per sheet'} · 105 × 74.25 mm</div>
     </div>
     <div class="grid">${labels}</div>
   </body>
