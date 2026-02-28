@@ -578,6 +578,11 @@ function App() {
   const hasStagedItems = stagedInstances.length > 0;
   const hasAutoLoadQuantities = state.cases.some((c) => Number(autoPackQuantities[c.skuId] ?? 0) > 0);
   const itemNumbers = buildItemNumberMap(placedInstances);
+  const stagedItemNumbers = stagedInstances.reduce((acc, inst, idx) => {
+    acc.set(inst.id, idx + 1);
+    return acc;
+  }, new Map<string, number>());
+  const getCaseLabel = (inst: CaseInstance) => state.skus.get(inst.skuId)?.name ?? inst.skuId;
 
   const resolveManualDropPosition = (instanceId: string, requested: { x: number; y: number; z: number }) => {
     if (!state.truck) return requested;
@@ -1329,7 +1334,7 @@ function App() {
                       setSelectedStagedIds(prev => e.target.checked ? [...prev, inst.id] : prev.filter(id => id !== inst.id));
                     }}
                   />
-                  <span onClick={() => actions.selectInstance(inst.id)}>{inst.id}</span>
+                  <span onClick={() => actions.selectInstance(inst.id)}>#{stagedItemNumbers.get(inst.id) ?? '-'} {getCaseLabel(inst)}</span>
                   <small>{t.staged}</small>
                 </label>
               ))}
@@ -1369,7 +1374,7 @@ function App() {
                   onClick={() => actions.selectInstance(inst.id)}
                   data-inst-id={inst.id}
                 >
-                  <span>#{itemNumbers.get(inst.id) ?? '-'} {inst.id}</span>
+                  <span>#{itemNumbers.get(inst.id) ?? '-'} {getCaseLabel(inst)}</span>
                   <small>({inst.position.x}, {inst.position.y}, {inst.position.z})</small>
                   <span className="mobile-drop-hint">{touchDropId === inst.id ? t.dropTarget : t.dragToSwap}</span>
                 </button>
@@ -1382,7 +1387,7 @@ function App() {
               <p className="selected-name">{selectedSku.name}</p>
               <div className="selected-details">
                 <span>{t.loadOrder}: #{itemNumbers.get(selectedInstance.id) ?? '-'}</span>
-                <span>{t.id}: {selectedInstance.id}</span>
+                <span>{t.skuId}: {selectedSku.skuId}</span>
                 <span>{t.weightKg}: {selectedSku.weightKg} kg</span>
               </div>
               <div className="position-inputs compact">
