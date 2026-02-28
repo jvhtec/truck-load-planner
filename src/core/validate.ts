@@ -25,6 +25,7 @@ import { SpatialIndex } from './spatial';
 import { computeAxleLoads } from './weight';
 
 const SUPPORT_EPSILON = 5; // 5mm
+const FLOOR_ONLY_TOKEN = 'FLOOR_ONLY';
 
 export interface ValidatorContext {
   truck: TruckType;
@@ -82,6 +83,16 @@ export function validatePlacement(
   if ((candidate as any).tilt?.x) {
     violations.push('INVALID_ORIENTATION');
     details.orientation = { error: 'Only Y-axis tilt is supported' };
+    return { valid: false, violations, details };
+  }
+
+  const isFloorOnly = (sku.stackClass ?? '')
+    .toUpperCase()
+    .split(/\s*[,;|]\s*/)
+    .includes(FLOOR_ONLY_TOKEN);
+  if (isFloorOnly && bottomZ(candidate.aabb) > SUPPORT_EPSILON) {
+    violations.push('INVALID_ORIENTATION');
+    details.orientation = { error: 'Floor-only SKU must be placed on floor' };
     return { valid: false, violations, details };
   }
   if (tiltY === 90) {

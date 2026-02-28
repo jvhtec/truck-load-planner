@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import { TruckView3D } from './components/TruckView3D';
 import type { CameraPreset } from './components/TruckView3D';
@@ -9,6 +9,7 @@ import { usePlanner } from './hooks/usePlanner';
 import type { SavedPlan } from './hooks/usePlanner';
 import type { CaseInstance, Yaw } from './core/types';
 import './App.css';
+import { buildStackClass, formatCaseCsv, parseCaseCsv, sanitizeSkuId } from './lib/caseCsv';
 
 const ORDER_BUCKET_MM = 100;
 
@@ -75,6 +76,7 @@ function App() {
   const [showSpatialMetrics, setShowSpatialMetrics] = useState(false);
   const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('trucks');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const caseImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showNewTruck, setShowNewTruck] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
@@ -112,6 +114,9 @@ function App() {
         clearAll: 'Limpiar Todo',
         autoPack: 'Auto Carga',
         autoPackQty: 'Cantidades Auto Carga',
+        exportCasesCsv: 'Exportar Casos (CSV)',
+        importCasesCsv: 'Importar Casos (CSV/XLSX*)',
+        importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
         lockView: 'Bloquear Vista',
         unlockView: 'Desbloquear Vista',
         top: 'Superior',
@@ -213,6 +218,9 @@ function App() {
         clearAll: 'Clear All',
         autoPack: 'Auto Pack',
         autoPackQty: 'Auto Pack Quantities',
+        exportCasesCsv: 'Export Cases (CSV)',
+        importCasesCsv: 'Import Cases (CSV/XLSX*)',
+        importCasesHelp: '* XLSX is not available in this environment; export as CSV to import.',
         lockView: 'Lock View',
         unlockView: 'Unlock View',
         top: 'Top',
@@ -589,6 +597,64 @@ function App() {
     }
   };
 
+
+  const downloadTextFile = (filename: string, content: string, mime: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportCases = () => {
+    const csv = formatCaseCsv(state.cases, autoPackQuantities);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    downloadTextFile(`cases-${stamp}.csv`, csv, 'text/csv;charset=utf-8');
+  };
+
+  const handleImportCases = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith('.xlsx')) {
+      alert(t.importCasesHelp);
+      return;
+    }
+    const csvText = await file.text();
+    const rows = parseCaseCsv(csvText);
+    const existing = new Set(state.cases.map((c) => c.skuId));
+
+    for (const row of rows) {
+      if (!row.boxName || row.length <= 0 || row.width <= 0 || row.height <= 0 || row.weight <= 0) continue;
+      const skuId = sanitizeSkuId(row.boxName, existing);
+      const noRotate = row.noRotate;
+      const allowedYaw: Yaw[] = noRotate ? [0] : [0, 90, 180, 270];
+      const canBeBase = !row.noStack;
+      const stackClass = buildStackClass(undefined, row.onFloor);
+      await actions.createCase({
+        skuId,
+        name: row.boxName,
+        dims: { l: row.length, w: row.width, h: row.height },
+        weightKg: row.weight,
+        uprightOnly: row.noTilt,
+        tiltAllowed: !row.noTilt,
+        allowedYaw,
+        canBeBase,
+        topContactAllowed: canBeBase,
+        maxLoadAboveKg: canBeBase ? Math.max(row.weight * 2, row.weight) : 0,
+        minSupportRatio: 0.75,
+        color: row.colorHex || '#6366f1',
+        stackClass,
+      });
+
+      if (row.count > 0) {
+        setAutoPackQuantities((prev) => ({ ...prev, [skuId]: row.count }));
+      }
+    }
+  };
+
   return (
     <div className={`app theme-${theme}`}>
       <header className="app-header">
@@ -604,6 +670,25 @@ function App() {
           <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
           <button onClick={() => setLang((prev) => (prev === 'es' ? 'en' : 'es'))}>{lang === 'es' ? 'EN' : 'ES'}</button>
           <button onClick={() => setShowLoadDialog(true)}>{t.loadPlan}</button>
+          <button onClick={handleExportCases} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
+          <button onClick={() => caseImportInputRef.current?.click()}>{t.importCasesCsv}</button>
+          <input
+            ref={caseImportInputRef}
+            type="file"
+            accept=".csv,.xlsx"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                await handleImportCases(file);
+              } catch (err) {
+                console.error('Import failed', err);
+              } finally {
+                e.currentTarget.value = '';
+              }
+            }}
+          />
           <button onClick={() => actions.clearAll()} disabled={state.instances.length === 0}>{t.clearAll}</button>
           <button
             onClick={() => {
