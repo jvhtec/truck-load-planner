@@ -791,6 +791,10 @@ function App() {
       const dims = sku ? `${sku.dims.l} \u00d7 ${sku.dims.w} \u00d7 ${sku.dims.h} mm` : '\u2013';
       const weight = sku ? `${sku.weightKg} kg` : '\u2013';
       const note = caseLabelsNotes[inst.id] ?? '';
+      const nameLen = name.length;
+      const nameFontSize = nameLen <= 8 ? '18pt' : nameLen <= 14 ? '15pt' : nameLen <= 20 ? '12pt' : nameLen <= 28 ? '10pt' : '8.5pt';
+      const skuFontSize = inst.skuId.length <= 12 ? '9pt' : inst.skuId.length <= 18 ? '8pt' : '7pt';
+      const rowFontSize = nameLen <= 8 ? '10pt' : nameLen <= 14 ? '9.5pt' : '8.5pt';
       return `
         <div class="label">
           <div class="label-header" style="background:${color};">
@@ -798,11 +802,11 @@ function App() {
             <span class="label-num">#${num}</span>
           </div>
           <div class="label-body">
-            <div class="label-name">${name}</div>
-            <div class="label-sku">${inst.skuId}</div>
-            <div class="label-row"><span class="label-key">Dims</span><span>${dims}</span></div>
-            <div class="label-row"><span class="label-key">Weight</span><span>${weight}</span></div>
-            ${note ? `<div class="label-note">${note}</div>` : ''}
+            <div class="label-name" style="font-size:${nameFontSize}">${name}</div>
+            <div class="label-sku" style="font-size:${skuFontSize}">${inst.skuId}</div>
+            <div class="label-row" style="font-size:${rowFontSize}"><span class="label-key">Dims</span><span>${dims}</span></div>
+            <div class="label-row" style="font-size:${rowFontSize}"><span class="label-key">Weight</span><span>${weight}</span></div>
+            ${note ? `<div class="label-note" style="font-size:${rowFontSize}">${note}</div>` : ''}
           </div>
         </div>`;
     }).join('');
@@ -817,29 +821,21 @@ function App() {
     <style>
       @page { size: A4 portrait; margin: 0; }
       * { box-sizing: border-box; }
-      body { font-family: ${bodyFont}; margin: 0; color: #111827; }
-      .screen-header { padding: 10px 14px; font-family: Segoe UI, Arial, sans-serif; border-bottom: 1px solid #e5e7eb; }
-      .screen-header h1 { margin: 0 0 2px; font-size: 15px; }
-      .screen-header .meta { color: #6b7280; font-size: 11px; }
+      body { font-family: ${bodyFont}; margin: 0; padding: 0; color: #111827; font-weight: 700; }
       .grid { display: grid; grid-template-columns: repeat(2, 105mm); width: 210mm; }
       .label { width: 105mm; height: 74.25mm; border: 0.5pt solid #d1d5db; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
-      .label-header { padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 2.5mm; flex-shrink: 0; height: 20mm; }
-      .label-logo { height: 12mm; width: auto; object-fit: contain; flex-shrink: 0; }
-      .label-num { font-size: 26pt; font-weight: 900; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.45); line-height: 1; margin-left: auto; }
-      .label-body { padding: 2mm 3.5mm; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-      .label-name { font-size: 10pt; font-weight: 700; line-height: 1.2; word-break: break-word; margin-bottom: 0.5mm; }
-      .label-sku { font-size: 7pt; color: #6b7280; font-family: monospace; margin-bottom: 1.5mm; }
-      .label-row { display: flex; justify-content: space-between; font-size: 7.5pt; margin-top: 0.8mm; }
-      .label-key { color: #6b7280; }
-      .label-note { margin-top: 1.5mm; font-size: 7.5pt; color: #374151; border-top: 0.5pt solid #e5e7eb; padding-top: 1.5mm; white-space: pre-wrap; word-break: break-word; flex: 1; overflow: hidden; }
-      @media print { .screen-header { display: none; } }
+      .label-header { padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 2.5mm; flex-shrink: 0; height: 22mm; }
+      .label-logo { height: 14mm; width: auto; object-fit: contain; flex-shrink: 0; }
+      .label-num { font-size: 30pt; font-weight: 900; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); line-height: 1; margin-left: auto; }
+      .label-body { padding: 2mm 3.5mm; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 0.5mm; }
+      .label-name { font-weight: 900; line-height: 1.15; word-break: break-word; }
+      .label-sku { color: #4b5563; font-family: monospace; font-weight: 700; }
+      .label-row { display: flex; justify-content: space-between; font-weight: 700; margin-top: 0.5mm; }
+      .label-key { color: #6b7280; font-weight: 700; }
+      .label-note { margin-top: 1mm; color: #1f2937; border-top: 0.5pt solid #d1d5db; padding-top: 1mm; white-space: pre-wrap; word-break: break-word; flex: 1; overflow: hidden; font-weight: 700; }
     </style>
   </head>
   <body>
-    <div class="screen-header">
-      <h1>${t.caseLabelsTitle}</h1>
-      <div class="meta">${t.labelTruck}: ${state.truck.name} &nbsp;|&nbsp; ${t.labelDate}: ${new Date().toLocaleString(lang === 'es' ? 'es-ES' : 'en-US')} &nbsp;|&nbsp; ${t.reportItems}: ${placedInstances.length} &nbsp;|&nbsp; A4 · 8 ${lang === 'es' ? 'por hoja' : 'per sheet'} · 105 × 74.25 mm</div>
-    </div>
     <div class="grid">${labels}</div>
   </body>
 </html>`;
@@ -1588,70 +1584,81 @@ function App() {
 
       {showCaseLabelsDialog && (
         <div className="dialog-overlay" onClick={() => setShowCaseLabelsDialog(false)}>
-          <div className="dialog" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
-            <h3>{t.caseLabelsSetup}</h3>
+          <div className="dialog case-labels-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="cl-dialog-header">
+              <h3>{t.caseLabelsSetup}</h3>
+              <button className="cl-close-btn" onClick={() => setShowCaseLabelsDialog(false)} aria-label="Close">✕</button>
+            </div>
 
-            <div className="form-field" style={{ marginBottom: 12 }}>
-              <span>{t.labelLogo}</span>
-              <input type="file" accept="image/*" onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => setCaseLabelsLogo((ev.target?.result as string) ?? '');
-                reader.readAsDataURL(file);
-              }} />
+            <div className="cl-section">
+              <div className="cl-section-label">{t.labelLogo}</div>
+              <label className="cl-file-btn">
+                <span>📎 {lang === 'es' ? 'Elegir imagen' : 'Choose image'}</span>
+                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => setCaseLabelsLogo((ev.target?.result as string) ?? '');
+                  reader.readAsDataURL(file);
+                }} />
+              </label>
               {caseLabelsLogo && (
-                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <img src={caseLabelsLogo} alt="logo preview" style={{ height: 36, objectFit: 'contain' }} />
-                  <button onClick={() => setCaseLabelsLogo('')}>{t.remove}</button>
+                <div className="cl-logo-preview">
+                  <img src={caseLabelsLogo} alt="logo preview" />
+                  <button className="cl-remove-btn" onClick={() => setCaseLabelsLogo('')}>{t.remove}</button>
                 </div>
               )}
             </div>
 
-            <div className="form-field" style={{ marginBottom: 16 }}>
-              <span>{t.labelFont}</span>
-              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <div className="cl-section">
+              <div className="cl-section-label">{t.labelFont}</div>
+              <div className="cl-font-toggle">
                 <button
-                  className={caseLabelsFont === 'clear' ? 'primary' : ''}
+                  className={`cl-font-btn${caseLabelsFont === 'clear' ? ' active' : ''}`}
                   onClick={() => setCaseLabelsFont('clear')}
                 >
-                  {t.labelFontClear}
+                  <span className="cl-font-preview" style={{ fontFamily: 'Segoe UI, Arial, sans-serif' }}>Aa</span>
+                  <span>{t.labelFontClear}</span>
                 </button>
                 <button
-                  className={caseLabelsFont === 'handwritten' ? 'primary' : ''}
+                  className={`cl-font-btn${caseLabelsFont === 'handwritten' ? ' active' : ''}`}
                   onClick={() => setCaseLabelsFont('handwritten')}
                 >
-                  {t.labelFontHandwritten}
+                  <span className="cl-font-preview" style={{ fontFamily: 'cursive' }}>Aa</span>
+                  <span>{t.labelFontHandwritten}</span>
                 </button>
               </div>
             </div>
 
-            <div style={{ maxHeight: 320, overflowY: 'auto', marginBottom: 16 }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{t.labelNotes}</span>
-              {[...placedInstances]
-                .sort((a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999))
-                .map((inst) => {
-                  const sku = state.skus.get(inst.skuId);
-                  const num = itemNumbers.get(inst.id) ?? '?';
-                  return (
-                    <div key={inst.id} style={{ marginTop: 8 }}>
-                      <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                        #{num} {sku?.name ?? inst.skuId}
-                      </label>
-                      <textarea
-                        style={{ width: '100%', marginTop: 4, fontSize: 12, resize: 'vertical', minHeight: 48, boxSizing: 'border-box' }}
-                        placeholder={lang === 'es' ? 'Contenido / notas...' : 'Contents / notes...'}
-                        value={caseLabelsNotes[inst.id] ?? ''}
-                        onChange={(e) => setCaseLabelsNotes((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                      />
-                    </div>
-                  );
-                })}
+            <div className="cl-section cl-notes-section">
+              <div className="cl-section-label">{t.labelNotes}</div>
+              <div className="cl-notes-list">
+                {[...placedInstances]
+                  .sort((a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999))
+                  .map((inst) => {
+                    const sku = state.skus.get(inst.skuId);
+                    const num = itemNumbers.get(inst.id) ?? '?';
+                    return (
+                      <div key={inst.id} className="cl-note-item">
+                        <label className="cl-note-label">
+                          <span className="cl-note-num">#{num}</span>
+                          {sku?.name ?? inst.skuId}
+                        </label>
+                        <textarea
+                          className="cl-note-textarea"
+                          placeholder={lang === 'es' ? 'Contenido / notas...' : 'Contents / notes...'}
+                          value={caseLabelsNotes[inst.id] ?? ''}
+                          onChange={(e) => setCaseLabelsNotes((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                        />
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
 
             <div className="dialog-actions">
               <button onClick={() => setShowCaseLabelsDialog(false)}>{t.cancel}</button>
-              <button className="primary" onClick={printCaseLabels}>{t.labelPrint}</button>
+              <button className="primary" onClick={printCaseLabels}>🖨 {t.labelPrint}</button>
             </div>
           </div>
         </div>
