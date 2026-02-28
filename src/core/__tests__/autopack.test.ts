@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { autoPack } from '../autopack';
+import { validatePlacement, type ValidatorContext } from '../validate';
+import { SupportGraph } from '../support';
 import type { CaseSKU, TruckType } from '../types';
 
 const truck: TruckType = {
@@ -36,6 +38,19 @@ const fragCase: CaseSKU = {
   topContactAllowed: false,
   maxLoadAboveKg: 0,
   minSupportRatio: 0.80,
+};
+
+const axleTightTruck: TruckType = {
+  ...truck,
+  axle: { frontX: 1000, rearX: 5500, maxFrontKg: 120, maxRearKg: 5000 },
+  balance: { maxLeftRightPercentDiff: 100 },
+};
+
+const axleConstrainedCase: CaseSKU = {
+  ...stdCase,
+  skuId: 'AXLE',
+  name: 'Axle Constrained',
+  weightKg: 80,
 };
 
 describe('autoPack', () => {
@@ -83,6 +98,40 @@ describe('autoPack', () => {
     }
   });
 
+  it('all placed output remains fully valid when replayed sequentially', () => {
+    const result = autoPack(truck, [stdCase, fragCase], new Map([['STD', 6], ['FRAG', 3]]), {
+      maxAttempts: 5,
+      randomSeed: 7,
+    });
+
+    const skus = new Map<string, CaseSKU>([
+      ['STD', stdCase],
+      ['FRAG', fragCase],
+    ]);
+    const skuWeights = new Map<string, number>([
+      ['STD', stdCase.weightKg],
+      ['FRAG', fragCase.weightKg],
+    ]);
+    const supportGraph = new SupportGraph(skuWeights);
+    const placedSoFar: typeof result.placed = [];
+
+    for (const inst of result.placed) {
+      const ctx: ValidatorContext = {
+        truck,
+        skus,
+        instances: placedSoFar,
+        supportGraph,
+        skuWeights,
+      };
+      const validation = validatePlacement(inst, ctx);
+      expect(validation.valid).toBe(true);
+      expect(validation.violations).toEqual([]);
+
+      placedSoFar.push(inst);
+      supportGraph.addInstance(inst, placedSoFar);
+    }
+  });
+
   it('metrics totalWeightKg matches placed cases', () => {
     const result = autoPack(truck, [stdCase], new Map([['STD', 3]]));
     const expected = result.placed.length * stdCase.weightKg;
@@ -96,6 +145,27 @@ describe('autoPack', () => {
     r1.placed.forEach((p, i) => {
       expect(p.position).toEqual(r2.placed[i].position);
     });
+  });
+
+  it('deterministic with explicit seed across multi-attempt runs', () => {
+    const cfg = { maxAttempts: 8, randomSeed: 42 };
+    const r1 = autoPack(truck, [stdCase, fragCase], new Map([['STD', 8], ['FRAG', 4]]), cfg);
+    const r2 = autoPack(truck, [stdCase, fragCase], new Map([['STD', 8], ['FRAG', 4]]), cfg);
+
+    const layout = (r: ReturnType<typeof autoPack>) =>
+      r.placed.map(p => ({ skuId: p.skuId, position: p.position, yaw: p.yaw }));
+
+    expect(layout(r1)).toEqual(layout(r2));
+    expect(r1.unplaced).toEqual(r2.unplaced);
+    expect(r1.reasonSummary).toEqual(r2.reasonSummary);
+  });
+
+  it('returns partial placement and axle rejection reason when constrained by front axle', () => {
+    const result = autoPack(axleTightTruck, [axleConstrainedCase], new Map([['AXLE', 2]]), { maxAttempts: 1 });
+
+    expect(result.placed).toHaveLength(1);
+    expect(result.unplaced).toHaveLength(1);
+    expect(result.reasonSummary.AXLE_FRONT_OVER ?? 0).toBeGreaterThan(0);
   });
 
   it('stress: packs 20 standard cases', () => {

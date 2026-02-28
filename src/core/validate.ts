@@ -147,6 +147,9 @@ export function validatePlacement(
 
   // 5. Stacking rules
   const supporters = findSupporters(candidate, ctx.instances);
+  const instancesById = new Map(ctx.instances.map(inst => [inst.id, inst]));
+  const candidateWeight = sku.weightKg;
+  const checkedLoadSupporters = new Set<string>();
   for (const supporter of supporters) {
     const supporterSku = ctx.skus.get(supporter.skuId);
     if (!supporterSku) continue;
@@ -161,18 +164,31 @@ export function validatePlacement(
       details.topContactForbidden = supporter.id;
     }
 
-    // Check cumulative load
-    const existingLoadAbove = ctx.supportGraph.getLoadAbove(supporter.id);
-    const candidateWeight = sku.weightKg;
+    // Check cumulative load on the full support chain (direct supporters + ancestors).
+    const affectedSupporters = collectSupportChainIds(supporter.id, ctx.supportGraph);
+    for (const affectedId of affectedSupporters) {
+      if (checkedLoadSupporters.has(affectedId)) continue;
+      checkedLoadSupporters.add(affectedId);
 
-    if (existingLoadAbove + candidateWeight > supporterSku.maxLoadAboveKg) {
-      violations.push('LOAD_EXCEEDED');
-      details.loadExceeded = {
-        supporter: supporter.id,
-        existingLoad: existingLoadAbove,
-        candidateWeight,
-        maxAllowed: supporterSku.maxLoadAboveKg,
-      };
+      const affectedInstance = instancesById.get(affectedId);
+      if (!affectedInstance) continue;
+      const affectedSku = ctx.skus.get(affectedInstance.skuId);
+      if (!affectedSku) continue;
+
+      const existingLoadAbove = ctx.supportGraph.getLoadAbove(affectedId);
+      if (existingLoadAbove + candidateWeight > affectedSku.maxLoadAboveKg) {
+        if (!violations.includes('LOAD_EXCEEDED')) {
+          violations.push('LOAD_EXCEEDED');
+        }
+        const loadExceeded = (details.loadExceeded as Array<Record<string, unknown>> | undefined) ?? [];
+        loadExceeded.push({
+          supporter: affectedId,
+          existingLoad: existingLoadAbove,
+          candidateWeight,
+          maxAllowed: affectedSku.maxLoadAboveKg,
+        });
+        details.loadExceeded = loadExceeded;
+      }
     }
   }
 
@@ -285,4 +301,20 @@ function findSupporters(
   }
 
   return supporters;
+}
+
+function collectSupportChainIds(instanceId: string, supportGraph: SupportGraph): Set<string> {
+  const result = new Set<string>();
+  const queue = [instanceId];
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (result.has(id)) continue;
+    result.add(id);
+    for (const supporterId of supportGraph.getSupporters(id)) {
+      queue.push(supporterId);
+    }
+  }
+
+  return result;
 }

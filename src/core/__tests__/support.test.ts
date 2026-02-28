@@ -84,4 +84,21 @@ describe('SupportGraph', () => {
     const floating = makeInst('float', 'B', 5000, 0, 400, 1000, 600, 400);
     expect(graph.getSupportRatio(floating, [base, floating])).toBe(0);
   });
+
+  it('getSupportRatio captures partial support below threshold', () => {
+    const base = makeInst('base', 'A', 0, 0, 0, 500, 600, 400);
+    const top = makeInst('top', 'B', 0, 0, 400, 1000, 600, 400);
+
+    // 500x600 overlap over 1000x600 bottom area => 0.50 support ratio
+    expect(graph.getSupportRatio(top, [base, top])).toBeCloseTo(0.5, 3);
+  });
+
+  it('getSupportRatio uses union support from multiple supporters', () => {
+    const baseA = makeInst('base-a', 'A', 0, 0, 0, 400, 600, 400);
+    const baseB = makeInst('base-b', 'A', 600, 0, 0, 400, 600, 400);
+    const top = makeInst('top', 'B', 0, 0, 400, 1000, 600, 400);
+
+    // (400 + 400) x 600 overlap over 1000x600 bottom area => 0.80 support ratio
+    expect(graph.getSupportRatio(top, [baseA, baseB, top])).toBeCloseTo(0.8, 3);
+  });
 });
