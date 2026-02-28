@@ -2,10 +2,10 @@ name: PR Preview
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
 
 concurrency:
@@ -14,110 +14,41 @@ concurrency:
 
 jobs:
   preview:
-    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-      
-      - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
-      
+        run: npm install
+
       - name: Build Preview
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          VITE_BASE_PATH: /truck-load-planner/pr-${{ github.event.number }}/
+          VITE_BASE_PATH: /truck-load-planner/
         run: npm run build
-      
+
       - name: Upload preview artifact
+        id: artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pr-preview-${{ github.event.number }}
+          name: pr-${{ github.event.number }}-preview
           path: dist/
+          retention-days: 7
 
-      - name: Deploy to gh-pages branch
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          
-          # Fetch gh-pages branch
-          git fetch origin gh-pages || git checkout --orphan gh-pages
-          git checkout gh-pages 2>/dev/null || git checkout -b gh-pages
-          git reset --hard origin/gh-pages 2>/dev/null || true
-          
-          # Remove old preview for this PR
-          rm -rf pr-${{ github.event.number }}
-          
-          # Copy new build
-          cp -r dist pr-${{ github.event.number }}
-          
-          # Add index redirect at root
-          if [ ! -f index.html ]; then
-            cat > index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head><title>Truck Load Planner</title></head>
-          <body>
-          <h1>Truck Load Planner</h1>
-          <p><a href="https://jvhtec.github.io/truck-load-planner/">Main Site</a></p>
-          </body>
-          </html>
-          EOF
-          fi
-          
-          git add .
-          git commit -m "Deploy PR #${{ github.event.number }} preview" || echo "No changes"
-          git push origin gh-pages --force
-      
-      - name: Comment PR with Preview URL
+      - name: Comment PR with artifact link
         uses: actions/github-script@v7
         with:
           script: |
-            const previewUrl = `https://jvhtec.github.io/truck-load-planner/pr-${{ github.event.number }}/`;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## 🚀 Preview Deployment\n\n**URL:** [${previewUrl}](${previewUrl})\n\n_This preview was deployed from commit \`${{ github.sha }}\`_\n\n---\n_Preview deployments are automatically updated on each push to this PR._`
-            });
-
-  cleanup:
-    if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          token: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Remove preview
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          
-          rm -rf pr-${{ github.event.number }}
-          git add .
-          git commit -m "Remove PR #${{ github.event.number }} preview" || echo "No changes"
-          git push origin gh-pages
-      
-      - name: Comment PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `## 🧹 Preview Removed\n\nThe preview deployment for this PR has been removed.`
+              body: `## Preview Build\n\nThe build for this PR succeeded. Download the artifact to test it locally:\n\n**[Download preview artifact](${runUrl})**\n\n_Built from commit \`${{ github.sha }}\`_`
             });
