@@ -484,7 +484,7 @@ body {
 }
 
 .case-action-add {
-  background: linear-gradient(135deg, var(--accent-green), #059669);
+  background: var(--accent-green);
   border-color: transparent;
   color: #ffffff;
 }
@@ -634,7 +634,7 @@ body {
 .place-button {
   width: 100%;
   padding: 0.875rem;
-  background: linear-gradient(135deg, var(--accent-green), #059669);
+  background: var(--accent-green);
   border: none;
   border-radius: 0.5rem;
   color: white;
@@ -653,7 +653,7 @@ body {
   width: 100%;
   margin-top: 0.75rem;
   padding: 0.875rem;
-  background: linear-gradient(135deg, var(--accent-red), #dc2626);
+  background: var(--accent-red);
   border: none;
   border-radius: 0.5rem;
   color: #ffffff;
@@ -1829,7 +1829,7 @@ body {
     padding: 0.62rem 0.95rem;
     border: none;
     border-radius: 999px;
-    background: linear-gradient(135deg, var(--accent-green), #059669);
+    background: var(--accent-green);
     color: #ffffff;
     font-size: 0.8rem;
     font-weight: 600;

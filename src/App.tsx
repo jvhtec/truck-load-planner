@@ -12,6 +12,7 @@ import { computeOrientedAABB } from './core/geometry';
 import { SpatialIndex } from './core/spatial';
 import { SupportGraph } from './core/support';
 import { validatePlacement } from './core/validate';
+import { SplashScreen } from './components/SplashScreen';
 import './App.css';
 import { buildStackClass, formatCaseCsv, parseCaseCsv, sanitizeSkuId } from './lib/caseCsv';
 
@@ -213,6 +214,8 @@ function App() {
   const toastSeqRef = useRef(0);
   const toastTimersRef = useRef<number[]>([]);
 
+  const [showSplash, setShowSplash] = useState(true);
+  const [showAbout, setShowAbout] = useState(false);
   const [showNewTruck, setShowNewTruck] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
 
@@ -229,215 +232,219 @@ function App() {
 
   const t = lang === 'es'
     ? {
-        loading: 'Cargando datos desde Supabase...',
-        error: 'Error',
-        errorHint: 'Asegurate de ejecutar schema.sql y seed.sql en Supabase',
-        appTitle: 'Planificador de Carga de Camiones',
-        showLeft: 'Mostrar Izquierda',
-        hideLeft: 'Ocultar Izquierda',
-        showRight: 'Mostrar Derecha',
-        hideRight: 'Ocultar Derecha',
-        newTruckType: 'Nuevo Tipo de Camion',
-        newCaseType: 'Nuevo Tipo de Caja',
-        savePlan: 'Guardar Plan',
-        preparingPdf: 'Preparando PDF...',
-        printPdf: 'Imprimir / PDF',
-        printItemList: 'Imprimir Lista',
-        lightMode: 'Modo Claro',
-        darkMode: 'Modo Oscuro',
-        loadPlan: 'Cargar Plan',
-        clearAll: 'Limpiar Todo',
-        autoPack: 'Auto Carga',
-        autoPackQty: 'Cantidades Auto Carga',
-        exportCasesCsv: 'Exportar Cases (CSV)',
-        importCasesCsv: 'Importar Cases (CSV/XLSX*)',
-        importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
-        importCasesFailed: 'Error al importar casos',
-        lockView: 'Bloquear Vista',
-        unlockView: 'Desbloquear Vista',
-        top: 'Superior',
-        sideLeft: 'Lado Izquierdo',
-        sideRight: 'Lado Derecho',
-        iso: 'Iso',
-        viewHint: 'Mantén presionado o clic derecho en una caja para acciones.',
-        showMetricsOverlay: 'Mostrar Panel Metricas',
-        hideMetricsOverlay: 'Ocultar Panel Metricas',
-        showSpatialMetrics: 'Mostrar Guias 3D',
-        hideSpatialMetrics: 'Ocultar Guias 3D',
-        rotate90: 'Rotar 90°',
-        toggleTiltY90: 'Alternar Inclinacion Y 90°',
-        cannotPlace: 'No se puede colocar',
-        stagedItems: 'Items en Zona Externa (fuera del camion)',
-        autoplaceSelected: 'Auto ubicar seleccionados',
-        staged: 'en zona externa',
-        placedItems: 'Items Colocados (arrastrar para intercambiar)',
-        dropTarget: 'Objetivo de suelta',
-        dragToSwap: 'Arrastrar / tocar para intercambiar',
-        selectedCase: 'Caja Seleccionada',
-        loadOrder: 'Orden de Carga',
-        id: 'ID',
-        weightKg: 'Peso',
-        noTilt: 'Sin Inclinacion',
-        tiltY90: 'Inclinacion Y 90°',
-        remove: 'Eliminar',
-        createTruckType: 'Crear Tipo de Camion',
-        truckHelp: 'Dimensiones segun coordenadas del camion: X = largo (frente a fondo), Y = ancho (izquierda a derecha), Z = alto (suelo a techo).',
-        truckId: 'ID Camion',
-        name: 'Nombre',
-        lengthX: 'Largo X (mm)',
-        widthY: 'Ancho Y (mm)',
-        heightZ: 'Alto Z (mm)',
-        emptyWeight: 'Peso Vacio (kg)',
-        cancel: 'Cancelar',
-        create: 'Crear',
-        createCaseType: 'Crear Tipo de Caja',
-        caseHelp: 'Dimensiones de la caja por ejes del camion despues de rotar: L = X (frente a fondo), W = Y (izquierda a derecha), H = Z (arriba).',
-        skuId: 'ID SKU',
-        lengthL: 'Largo L (mm)',
-        widthW: 'Ancho W (mm)',
-        heightH: 'Alto H (mm)',
-        caseWeightKg: 'Peso (kg)',
-        stackable: 'Apilable (Puede ser base)',
-        tiltAllowed: 'Inclinacion Permitida (Y 90°)',
-        color: 'Color',
-        saveLoadPlan: 'Guardar Plan de Carga',
-        planNamePlaceholder: 'Nombre del plan...',
-        saving: 'Guardando...',
-        save: 'Guardar',
-        loadPlanTitle: 'Cargar Plan',
-        noSavedPlans: 'No hay planes guardados',
-        close: 'Cerrar',
-        reportTitle: 'Planificador de Carga - Reporte',
-        reportTruck: 'Camion',
-        reportPrinted: 'Impreso',
-        reportItems: 'Items',
-        reportTopView: 'Vista Superior',
-        reportSideLeft: 'Vista Lado Izquierdo',
-        reportSideRight: 'Vista Lado Derecho',
-        reportIso: 'Vista Isometrica',
-        reportCaptureUnavailable: 'Captura no disponible',
-        itemListTitle: 'Planificador de Carga - Lista de Carga',
-        listOrder: 'Orden',
-        listSku: 'SKU',
-        listName: 'Nombre',
-        listDims: 'Dimensiones',
-        listWeight: 'Peso',
-        listPosition: 'Posicion',
-        listPlacement: 'Ubicacion',
-        rowLabel: 'Fila',
-        placementFloor: 'en suelo',
-        placementOnTop: 'encima de item',
-        placementManual: 'segun coordenadas',
-        mobileTabView: 'Vista 3D',
-        mobileTabTrucks: 'Camiones',
-        mobileTabCases: 'Cajas',
-        mobileMenuTitle: 'Acciones',
-      }
+      loading: 'Cargando datos desde Supabase...',
+      error: 'Error',
+      errorHint: 'Asegurate de ejecutar schema.sql y seed.sql en Supabase',
+      appTitle: 'Planificador de Carga de Camiones',
+      showLeft: 'Mostrar Izquierda',
+      hideLeft: 'Ocultar Izquierda',
+      showRight: 'Mostrar Derecha',
+      hideRight: 'Ocultar Derecha',
+      newTruckType: 'Nuevo Tipo de Camion',
+      newCaseType: 'Nuevo Tipo de Caja',
+      savePlan: 'Guardar Plan',
+      preparingPdf: 'Preparando PDF...',
+      printPdf: 'Imprimir / PDF',
+      printItemList: 'Imprimir Lista',
+      lightMode: 'Modo Claro',
+      darkMode: 'Modo Oscuro',
+      loadPlan: 'Cargar Plan',
+      clearAll: 'Limpiar Todo',
+      autoPack: 'Auto Carga',
+      autoPackQty: 'Cantidades Auto Carga',
+      exportCasesCsv: 'Exportar Cases (CSV)',
+      importCasesCsv: 'Importar Cases (CSV/XLSX*)',
+      importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
+      importCasesFailed: 'Error al importar casos',
+      lockView: 'Bloquear Vista',
+      unlockView: 'Desbloquear Vista',
+      top: 'Superior',
+      sideLeft: 'Lado Izquierdo',
+      sideRight: 'Lado Derecho',
+      iso: 'Iso',
+      viewHint: 'Mantén presionado o clic derecho en una caja para acciones.',
+      showMetricsOverlay: 'Mostrar Panel Metricas',
+      hideMetricsOverlay: 'Ocultar Panel Metricas',
+      showSpatialMetrics: 'Mostrar Guias 3D',
+      hideSpatialMetrics: 'Ocultar Guias 3D',
+      rotate90: 'Rotar 90°',
+      toggleTiltY90: 'Alternar Inclinacion Y 90°',
+      cannotPlace: 'No se puede colocar',
+      stagedItems: 'Items en Zona Externa (fuera del camion)',
+      autoplaceSelected: 'Auto ubicar seleccionados',
+      staged: 'en zona externa',
+      placedItems: 'Items Colocados (arrastrar para intercambiar)',
+      dropTarget: 'Objetivo de suelta',
+      dragToSwap: 'Arrastrar / tocar para intercambiar',
+      selectedCase: 'Caja Seleccionada',
+      loadOrder: 'Orden de Carga',
+      id: 'ID',
+      weightKg: 'Peso',
+      noTilt: 'Sin Inclinacion',
+      tiltY90: 'Inclinacion Y 90°',
+      remove: 'Eliminar',
+      createTruckType: 'Crear Tipo de Camion',
+      truckHelp: 'Dimensiones segun coordenadas del camion: X = largo (frente a fondo), Y = ancho (izquierda a derecha), Z = alto (suelo a techo).',
+      truckId: 'ID Camion',
+      name: 'Nombre',
+      lengthX: 'Largo X (mm)',
+      widthY: 'Ancho Y (mm)',
+      heightZ: 'Alto Z (mm)',
+      emptyWeight: 'Peso Vacio (kg)',
+      cancel: 'Cancelar',
+      create: 'Crear',
+      createCaseType: 'Crear Tipo de Caja',
+      caseHelp: 'Dimensiones de la caja por ejes del camion despues de rotar: L = X (frente a fondo), W = Y (izquierda a derecha), H = Z (arriba).',
+      skuId: 'ID SKU',
+      lengthL: 'Largo L (mm)',
+      widthW: 'Ancho W (mm)',
+      heightH: 'Alto H (mm)',
+      caseWeightKg: 'Peso (kg)',
+      stackable: 'Apilable (Puede ser base)',
+      tiltAllowed: 'Inclinacion Permitida (Y 90°)',
+      color: 'Color',
+      saveLoadPlan: 'Guardar Plan de Carga',
+      planNamePlaceholder: 'Nombre del plan...',
+      saving: 'Guardando...',
+      save: 'Guardar',
+      loadPlanTitle: 'Cargar Plan',
+      noSavedPlans: 'No hay planes guardados',
+      close: 'Cerrar',
+      reportTitle: 'Planificador de Carga - Reporte',
+      reportTruck: 'Camion',
+      reportPrinted: 'Impreso',
+      reportItems: 'Items',
+      reportTopView: 'Vista Superior',
+      reportSideLeft: 'Vista Lado Izquierdo',
+      reportSideRight: 'Vista Lado Derecho',
+      reportIso: 'Vista Isometrica',
+      reportCaptureUnavailable: 'Captura no disponible',
+      itemListTitle: 'Planificador de Carga - Lista de Carga',
+      listOrder: 'Orden',
+      listSku: 'SKU',
+      listName: 'Nombre',
+      listDims: 'Dimensiones',
+      listWeight: 'Peso',
+      listPosition: 'Posicion',
+      listPlacement: 'Ubicacion',
+      rowLabel: 'Fila',
+      placementFloor: 'en suelo',
+      placementOnTop: 'encima de item',
+      placementManual: 'segun coordenadas',
+      mobileTabView: 'Vista 3D',
+      mobileTabTrucks: 'Camiones',
+      mobileTabCases: 'Cajas',
+      mobileMenuTitle: 'Acciones',
+      about: 'Acerca de',
+      createdBy: 'Creado por JVH 2025',
+    }
     : {
-        loading: 'Loading data from Supabase...',
-        error: 'Error',
-        errorHint: 'Make sure you have run schema.sql and seed.sql in Supabase',
-        appTitle: 'Truck Load Planner',
-        showLeft: 'Show Left',
-        hideLeft: 'Hide Left',
-        showRight: 'Show Right',
-        hideRight: 'Hide Right',
-        newTruckType: 'New Truck Type',
-        newCaseType: 'New Case Type',
-        savePlan: 'Save Plan',
-        preparingPdf: 'Preparing PDF...',
-        printPdf: 'Print / PDF',
-        printItemList: 'Print Item List',
-        lightMode: 'Light Mode',
-        darkMode: 'Dark Mode',
-        loadPlan: 'Load Plan',
-        clearAll: 'Clear All',
-        autoPack: 'Auto Pack',
-        autoPackQty: 'Auto Pack Quantities',
-        exportCasesCsv: 'Export Cases (CSV)',
-        importCasesCsv: 'Import Cases (CSV/XLSX*)',
-        importCasesHelp: '* XLSX is not available in this environment; export as CSV to import.',
-        importCasesFailed: 'Failed to import cases',
-        lockView: 'Lock View',
-        unlockView: 'Unlock View',
-        top: 'Top',
-        sideLeft: 'Side Left',
-        sideRight: 'Side Right',
-        iso: 'Iso',
-        viewHint: 'Long-press or right-click a case for actions.',
-        showMetricsOverlay: 'Show Metrics Panel',
-        hideMetricsOverlay: 'Hide Metrics Panel',
-        showSpatialMetrics: 'Show 3D Guides',
-        hideSpatialMetrics: 'Hide 3D Guides',
-        rotate90: 'Rotate 90°',
-        toggleTiltY90: 'Toggle Tilt Y 90°',
-        cannotPlace: 'Cannot Place',
-        stagedItems: 'Staged Items (outside truck)',
-        autoplaceSelected: 'Autoplace Selected',
-        staged: 'staged',
-        placedItems: 'Placed Items (drag to swap)',
-        dropTarget: 'Drop target',
-        dragToSwap: 'Drag / touch to swap',
-        selectedCase: 'Selected Case',
-        loadOrder: 'Load Order',
-        id: 'ID',
-        weightKg: 'Weight',
-        noTilt: 'No Tilt',
-        tiltY90: 'Tilt Y 90°',
-        remove: 'Remove',
-        createTruckType: 'Create Truck Type',
-        truckHelp: 'Dimensions use truck coordinates: X = length (front to rear), Y = width (left to right), Z = height (floor to roof).',
-        truckId: 'Truck ID',
-        name: 'Name',
-        lengthX: 'Length X (mm)',
-        widthY: 'Width Y (mm)',
-        heightZ: 'Height Z (mm)',
-        emptyWeight: 'Empty Weight (kg)',
-        cancel: 'Cancel',
-        create: 'Create',
-        createCaseType: 'Create Case Type',
-        caseHelp: 'Case dimensions map to truck axes after rotation: L = X (front to rear), W = Y (left to right), H = Z (up).',
-        skuId: 'SKU ID',
-        lengthL: 'Length L (mm)',
-        widthW: 'Width W (mm)',
-        heightH: 'Height H (mm)',
-        caseWeightKg: 'Weight (kg)',
-        stackable: 'Stackable (Can Be Base)',
-        tiltAllowed: 'Tilt Allowed (Y 90°)',
-        color: 'Color',
-        saveLoadPlan: 'Save Load Plan',
-        planNamePlaceholder: 'Plan name...',
-        saving: 'Saving...',
-        save: 'Save',
-        loadPlanTitle: 'Load Plan',
-        noSavedPlans: 'No saved plans',
-        close: 'Close',
-        reportTitle: 'Truck Load Planner - Load Report',
-        reportTruck: 'Truck',
-        reportPrinted: 'Printed',
-        reportItems: 'Items',
-        reportTopView: 'Top View',
-        reportSideLeft: 'Side Left View',
-        reportSideRight: 'Side Right View',
-        reportIso: 'Isometric View',
-        reportCaptureUnavailable: 'Capture unavailable',
-        itemListTitle: 'Truck Load Planner - Ordered Item List',
-        listOrder: 'Order',
-        listSku: 'SKU',
-        listName: 'Name',
-        listDims: 'Dimensions',
-        listWeight: 'Weight',
-        listPosition: 'Position',
-        listPlacement: 'Placement',
-        rowLabel: 'Row',
-        placementFloor: 'on floor',
-        placementOnTop: 'on top of item',
-        placementManual: 'by coordinates',
-        mobileTabView: '3D View',
-        mobileTabTrucks: 'Trucks',
-        mobileTabCases: 'Cases',
-        mobileMenuTitle: 'Actions',
-      };
+      loading: 'Loading data from Supabase...',
+      error: 'Error',
+      errorHint: 'Make sure you have run schema.sql and seed.sql in Supabase',
+      appTitle: 'Truck Load Planner',
+      showLeft: 'Show Left',
+      hideLeft: 'Hide Left',
+      showRight: 'Show Right',
+      hideRight: 'Hide Right',
+      newTruckType: 'New Truck Type',
+      newCaseType: 'New Case Type',
+      savePlan: 'Save Plan',
+      preparingPdf: 'Preparing PDF...',
+      printPdf: 'Print / PDF',
+      printItemList: 'Print Item List',
+      lightMode: 'Light Mode',
+      darkMode: 'Dark Mode',
+      loadPlan: 'Load Plan',
+      clearAll: 'Clear All',
+      autoPack: 'Auto Pack',
+      autoPackQty: 'Auto Pack Quantities',
+      exportCasesCsv: 'Export Cases (CSV)',
+      importCasesCsv: 'Import Cases (CSV/XLSX*)',
+      importCasesHelp: '* XLSX is not available in this environment; export as CSV to import.',
+      importCasesFailed: 'Failed to import cases',
+      lockView: 'Lock View',
+      unlockView: 'Unlock View',
+      top: 'Top',
+      sideLeft: 'Side Left',
+      sideRight: 'Side Right',
+      iso: 'Iso',
+      viewHint: 'Long-press or right-click a case for actions.',
+      showMetricsOverlay: 'Show Metrics Panel',
+      hideMetricsOverlay: 'Hide Metrics Panel',
+      showSpatialMetrics: 'Show 3D Guides',
+      hideSpatialMetrics: 'Hide 3D Guides',
+      rotate90: 'Rotate 90°',
+      toggleTiltY90: 'Toggle Tilt Y 90°',
+      cannotPlace: 'Cannot Place',
+      stagedItems: 'Staged Items (outside truck)',
+      autoplaceSelected: 'Autoplace Selected',
+      staged: 'staged',
+      placedItems: 'Placed Items (drag to swap)',
+      dropTarget: 'Drop target',
+      dragToSwap: 'Drag / touch to swap',
+      selectedCase: 'Selected Case',
+      loadOrder: 'Load Order',
+      id: 'ID',
+      weightKg: 'Weight',
+      noTilt: 'No Tilt',
+      tiltY90: 'Tilt Y 90°',
+      remove: 'Remove',
+      createTruckType: 'Create Truck Type',
+      truckHelp: 'Dimensions use truck coordinates: X = length (front to rear), Y = width (left to right), Z = height (floor to roof).',
+      truckId: 'Truck ID',
+      name: 'Name',
+      lengthX: 'Length X (mm)',
+      widthY: 'Width Y (mm)',
+      heightZ: 'Height Z (mm)',
+      emptyWeight: 'Empty Weight (kg)',
+      cancel: 'Cancel',
+      create: 'Create',
+      createCaseType: 'Create Case Type',
+      caseHelp: 'Case dimensions map to truck axes after rotation: L = X (front to rear), W = Y (left to right), H = Z (up).',
+      skuId: 'SKU ID',
+      lengthL: 'Length L (mm)',
+      widthW: 'Width W (mm)',
+      heightH: 'Height H (mm)',
+      caseWeightKg: 'Weight (kg)',
+      stackable: 'Stackable (Can Be Base)',
+      tiltAllowed: 'Tilt Allowed (Y 90°)',
+      color: 'Color',
+      saveLoadPlan: 'Save Load Plan',
+      planNamePlaceholder: 'Plan name...',
+      saving: 'Saving...',
+      save: 'Save',
+      loadPlanTitle: 'Load Plan',
+      noSavedPlans: 'No saved plans',
+      close: 'Close',
+      reportTitle: 'Truck Load Planner - Load Report',
+      reportTruck: 'Truck',
+      reportPrinted: 'Printed',
+      reportItems: 'Items',
+      reportTopView: 'Top View',
+      reportSideLeft: 'Side Left View',
+      reportSideRight: 'Side Right View',
+      reportIso: 'Isometric View',
+      reportCaptureUnavailable: 'Capture unavailable',
+      itemListTitle: 'Truck Load Planner - Ordered Item List',
+      listOrder: 'Order',
+      listSku: 'SKU',
+      listName: 'Name',
+      listDims: 'Dimensions',
+      listWeight: 'Weight',
+      listPosition: 'Position',
+      listPlacement: 'Placement',
+      rowLabel: 'Row',
+      placementFloor: 'on floor',
+      placementOnTop: 'on top of item',
+      placementManual: 'by coordinates',
+      mobileTabView: '3D View',
+      mobileTabTrucks: 'Trucks',
+      mobileTabCases: 'Cases',
+      mobileMenuTitle: 'Actions',
+      about: 'About',
+      createdBy: 'Created by JVH 2025',
+    };
 
   useEffect(() => {
     if (showLoadDialog) {
@@ -516,6 +523,14 @@ function App() {
     }, 4200);
     toastTimersRef.current.push(timerId);
   };
+
+  if (showSplash) {
+    return (
+      <div className="app theme-dark">
+        <SplashScreen onComplete={() => setShowSplash(false)} />
+      </div>
+    );
+  }
 
   if (state.loading) {
     return <div className="app loading"><div className="spinner" /><p>{t.loading}</p></div>;
@@ -898,6 +913,7 @@ function App() {
           <button onClick={printOrderedItemList} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
           <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
           <button onClick={() => setLang((prev) => (prev === 'es' ? 'en' : 'es'))}>{lang === 'es' ? 'EN' : 'ES'}</button>
+          <button onClick={() => setShowAbout(true)}>{t.about}</button>
           <button onClick={() => setShowLoadDialog(true)}>{t.loadPlan}</button>
           <button onClick={handleExportCases} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
           <button onClick={() => caseImportInputRef.current?.click()}>{t.importCasesCsv}</button>
@@ -929,7 +945,7 @@ function App() {
           </button>
         </div>
         <button className="mobile-menu-btn" onClick={() => setShowMobileMenu(true)} aria-label={t.mobileMenuTitle}>
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect y="3" width="20" height="2" rx="1" fill="currentColor"/><rect y="9" width="20" height="2" rx="1" fill="currentColor"/><rect y="15" width="20" height="2" rx="1" fill="currentColor"/></svg>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect y="3" width="20" height="2" rx="1" fill="currentColor" /><rect y="9" width="20" height="2" rx="1" fill="currentColor" /><rect y="15" width="20" height="2" rx="1" fill="currentColor" /></svg>
         </button>
       </header>
 
@@ -967,6 +983,7 @@ function App() {
               <button onClick={() => { printOrderedItemList(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
               <button onClick={() => { setTheme(v => v === 'dark' ? 'light' : 'dark'); setShowMobileMenu(false); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
               <button onClick={() => { setLang(prev => prev === 'es' ? 'en' : 'es'); setShowMobileMenu(false); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
+              <button onClick={() => { setShowAbout(true); setShowMobileMenu(false); }}>{t.about}</button>
               <button onClick={() => { handleExportCases(); setShowMobileMenu(false); }} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
               <button onClick={() => { caseImportInputRef.current?.click(); setShowMobileMenu(false); }}>{t.importCasesCsv}</button>
               <button onClick={() => { actions.clearAll(); setShowMobileMenu(false); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
@@ -1300,15 +1317,15 @@ function App() {
 
       <nav className="mobile-tab-bar">
         <button className={mobileTab === 'trucks' ? 'active' : ''} onClick={() => setMobileTab('trucks')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13" rx="2" /><path d="M16 8h4l3 3v5h-7V8z" /><circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" /></svg>
           <span>{t.mobileTabTrucks}</span>
         </button>
         <button className={mobileTab === 'view' ? 'active' : ''} onClick={() => setMobileTab('view')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
           <span>{t.mobileTabView}</span>
         </button>
         <button className={mobileTab === 'cases' ? 'active' : ''} onClick={() => setMobileTab('cases')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>
           <span>{t.mobileTabCases}</span>
         </button>
       </nav>
@@ -1458,6 +1475,21 @@ function App() {
               </div>
             )}
             <div className="dialog-actions"><button onClick={() => setShowLoadDialog(false)}>{t.close}</button></div>
+          </div>
+        </div>
+      )}
+
+      {showAbout && (
+        <div className="dialog-overlay" onClick={() => setShowAbout(false)}>
+          <div className="dialog about-dialog" onClick={(e) => e.stopPropagation()}>
+            <div style={{ textAlign: 'center', margin: '2rem 0' }}>
+              <img src="/icon-192x192.png" alt="Logo" style={{ width: 80, height: 80, borderRadius: 16, marginBottom: '1rem', boxShadow: 'var(--shadow-md)' }} />
+              <h2>{t.appTitle}</h2>
+              <p style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>{t.createdBy}</p>
+            </div>
+            <div className="dialog-actions">
+              <button className="primary" onClick={() => setShowAbout(false)}>{t.close}</button>
+            </div>
           </div>
         </div>
       )}
