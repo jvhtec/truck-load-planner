@@ -73,6 +73,8 @@ function App() {
   const [lang, setLang] = useState<'es' | 'en'>('es');
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true);
   const [showSpatialMetrics, setShowSpatialMetrics] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('view');
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   const [showNewTruck, setShowNewTruck] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
@@ -185,6 +187,10 @@ function App() {
         placementFloor: 'en suelo',
         placementOnTop: 'encima de item',
         placementManual: 'segun coordenadas',
+        mobileTabView: 'Vista 3D',
+        mobileTabTrucks: 'Camiones',
+        mobileTabCases: 'Cajas',
+        mobileMenuTitle: 'Acciones',
       }
     : {
         loading: 'Loading data from Supabase...',
@@ -282,6 +288,10 @@ function App() {
         placementFloor: 'on floor',
         placementOnTop: 'on top of item',
         placementManual: 'by coordinates',
+        mobileTabView: '3D View',
+        mobileTabTrucks: 'Trucks',
+        mobileTabCases: 'Cases',
+        mobileMenuTitle: 'Actions',
       };
 
   useEffect(() => {
@@ -605,10 +615,51 @@ function App() {
             {t.autoPack}
           </button>
         </div>
+        <button className="mobile-menu-btn" onClick={() => setShowMobileMenu(true)} aria-label={t.mobileMenuTitle}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect y="3" width="20" height="2" rx="1" fill="currentColor"/><rect y="9" width="20" height="2" rx="1" fill="currentColor"/><rect y="15" width="20" height="2" rx="1" fill="currentColor"/></svg>
+        </button>
       </header>
 
-      <main className={`app-main ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}`}>
-        {!leftCollapsed && <aside className="sidebar left">
+      {showMobileMenu && (
+        <div className="mobile-menu-overlay" onClick={() => setShowMobileMenu(false)}>
+          <div className="mobile-menu-sheet" onClick={e => e.stopPropagation()}>
+            <div className="mobile-menu-header">
+              <span>{t.mobileMenuTitle}</span>
+              <button onClick={() => setShowMobileMenu(false)} aria-label={t.close}>&times;</button>
+            </div>
+            <div className="mobile-menu-items">
+              <button onClick={() => { setShowNewTruck(true); setShowMobileMenu(false); }}>{t.newTruckType}</button>
+              <button onClick={() => { setShowNewCase(true); setShowMobileMenu(false); }}>{t.newCaseType}</button>
+              <button onClick={() => { setShowSaveDialog(true); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0}>{t.savePlan}</button>
+              <button onClick={() => { setShowLoadDialog(true); setShowMobileMenu(false); }}>{t.loadPlan}</button>
+              <button onClick={() => { printReportPdf(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
+              <button onClick={() => { printOrderedItemList(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
+              <button onClick={() => { setTheme(v => v === 'dark' ? 'light' : 'dark'); setShowMobileMenu(false); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
+              <button onClick={() => { setLang(prev => prev === 'es' ? 'en' : 'es'); setShowMobileMenu(false); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
+              <button onClick={() => { actions.clearAll(); setShowMobileMenu(false); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
+              <button
+                onClick={() => {
+                  const stagedIds = state.instances.filter(i => i.staged).map(i => i.id);
+                  if (stagedIds.length > 0) {
+                    const res = actions.autoPlaceInstances(stagedIds);
+                    if (!res.valid) console.warn('Autoplace all staged failed', res);
+                    setSelectedStagedIds([]);
+                  } else if (hasAutoLoadQuantities) {
+                    actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
+                  }
+                  setShowMobileMenu(false);
+                }}
+                disabled={!state.truck || (!hasStagedItems && !hasAutoLoadQuantities)}
+              >
+                {t.autoPack}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main className={`app-main ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}`} data-mobile-tab={mobileTab}>
+        <aside className={`sidebar left ${leftCollapsed ? 'desktop-hidden' : ''}`}>
           <TruckSelector
             trucks={state.trucks}
             selected={state.truck}
@@ -625,7 +676,7 @@ function App() {
               ))}
             </div>
           </div>
-        </aside>}
+        </aside>
 
         <section className="main-view" onMouseDown={() => setItemActionsMenu(null)}>
           <div className="view-controls">
@@ -738,7 +789,7 @@ function App() {
           )}
         </section>
 
-        {!rightCollapsed && <aside className="sidebar right">
+        <aside className={`sidebar right ${rightCollapsed ? 'desktop-hidden' : ''}`} data-panel="cases">
           <CaseCatalog
             cases={state.cases}
             lang={lang}
@@ -875,8 +926,23 @@ function App() {
               <button onClick={() => actions.removeCase(selectedInstance.id)}>{t.remove}</button>
             </div>
           )}
-        </aside>}
+        </aside>
       </main>
+
+      <nav className="mobile-tab-bar">
+        <button className={mobileTab === 'trucks' ? 'active' : ''} onClick={() => setMobileTab('trucks')}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+          <span>{t.mobileTabTrucks}</span>
+        </button>
+        <button className={mobileTab === 'view' ? 'active' : ''} onClick={() => setMobileTab('view')}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <span>{t.mobileTabView}</span>
+        </button>
+        <button className={mobileTab === 'cases' ? 'active' : ''} onClick={() => setMobileTab('cases')}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <span>{t.mobileTabCases}</span>
+        </button>
+      </nav>
 
       {showNewTruck && (
         <div className="dialog-overlay" onClick={() => setShowNewTruck(false)}>
