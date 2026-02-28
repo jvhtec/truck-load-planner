@@ -73,6 +73,7 @@ function App() {
   const [printing, setPrinting] = useState(false);
   const [lang, setLang] = useState<'es' | 'en'>('es');
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true);
+  const [metricsCollapsed, setMetricsCollapsed] = useState(true);
   const [showSpatialMetrics, setShowSpatialMetrics] = useState(false);
   const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('trucks');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -115,8 +116,8 @@ function App() {
         clearAll: 'Limpiar Todo',
         autoPack: 'Auto Carga',
         autoPackQty: 'Cantidades Auto Carga',
-        exportCasesCsv: 'Exportar Casos (CSV)',
-        importCasesCsv: 'Importar Casos (CSV/XLSX*)',
+        exportCasesCsv: 'Exportar Cases (CSV)',
+        importCasesCsv: 'Importar Cases (CSV/XLSX*)',
         importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
         importCasesFailed: 'Error al importar casos',
         lockView: 'Bloquear Vista',
@@ -885,8 +886,14 @@ function App() {
             }}
           />
           {showMetricsOverlay && (
-            <div className="metrics-overlay">
-              <MetricsPanel metrics={state.metrics} truck={state.truck} lang={lang} />
+            <div className={`metrics-overlay ${metricsCollapsed ? 'collapsed' : ''}`}>
+              <MetricsPanel
+                metrics={state.metrics}
+                truck={state.truck}
+                lang={lang}
+                collapsed={metricsCollapsed}
+                onToggleCollapsed={() => setMetricsCollapsed(v => !v)}
+              />
             </div>
           )}
           {state.validation && !state.validation.valid && (
