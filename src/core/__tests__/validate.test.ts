@@ -102,6 +102,25 @@ describe('validatePlacement – COLLISION', () => {
   });
 });
 
+describe('validatePlacement – keepout obstacles', () => {
+  it('rejects placement that intersects a fixed truck obstacle', () => {
+    const truckWithObstacle: TruckType = {
+      ...truck,
+      obstacles: [
+        {
+          min: { x: 200, y: CENTER_Y, z: 0 },
+          max: { x: 900, y: CENTER_Y + 1000, z: 800 },
+        },
+      ],
+    };
+
+    const inst = createInstance('i-obstacle', baseSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const result = validatePlacement(inst, makeCtx([], undefined, truckWithObstacle));
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContain('COLLISION');
+  });
+});
+
 describe('validatePlacement – INVALID_ORIENTATION', () => {
   it('rejects disallowed yaw', () => {
     // fragSku only allows 0/180; yaw=90 must be rejected

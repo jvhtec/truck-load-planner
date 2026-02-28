@@ -95,7 +95,9 @@ export function TruckView3D({
           target={[truck.innerDims.x / 2000, truck.innerDims.y / 2000, truck.innerDims.z / 2000]}
           enableDamping
           dampingFactor={0.05}
-          enabled={!viewLocked}
+          enableRotate={!viewLocked}
+          enablePan={!viewLocked}
+          enableZoom
         />
         <CameraController truck={truck} preset={cameraPreset} controlsRef={controlsRef} />
 

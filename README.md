@@ -405,6 +405,8 @@ npm run dev      # Start Vite dev server (http://localhost:5173)
 npm run build    # TypeScript type-check + Vite production build
 npm run preview  # Serve the production build locally
 npm run test     # Run all Vitest unit tests (watch mode: npx vitest)
+npm run test:run # Run all Vitest tests once (CI mode)
+npm run test:fuzz # Run deterministic torture fuzz harness once
 npm run lint     # ESLint with zero-warning policy
 ```
 
@@ -461,6 +463,32 @@ npm run test              # single run
 npx vitest                # interactive watch mode
 npx vitest --coverage     # with coverage report
 ```
+
+### Torture Fuzz Pack
+
+`src/core/__tests__/torture-fuzz.test.ts` implements a deterministic fuzz harness for:
+
+- constrained SKU generation (dims, weight/volume correlation, stack/support/orientation rules)
+- truck selection from 8 presets
+- biased pack requests (10-80 typical, occasional 150+ stress)
+- autopack replay validation + hard invariants
+- manual edit flows with revalidation after each edit
+- save/load canonical + metrics round-trip
+- CSV export/import canonical round-trip + autopack revalidation
+
+Control run size with env vars:
+
+```bash
+# examples
+FUZZ_ITERATIONS=1000 FUZZ_SEED_OFFSET=0 npm run test:fuzz
+FUZZ_ITERATIONS=2500 FUZZ_SEED_OFFSET=5000 FUZZ_PROFILE=weekly npm run test:fuzz
+```
+
+CI tiering is in `.github/workflows/torture-fuzz.yml`:
+
+- PR: 1,000 iterations total (4 shards × 250)
+- Nightly: 10,000 iterations total (10 shards × 1,000)
+- Weekly: 50,000 iterations total (20 shards × 2,500)
 
 ---
 

@@ -1,0 +1,110 @@
+name: Torture Fuzz
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: '0 3 * * *'   # nightly
+    - cron: '0 4 * * 6'   # weekly (Saturday)
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Fuzz tier to run
+        required: true
+        default: pr
+        type: choice
+        options:
+          - pr
+          - nightly
+          - weekly
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz-pr:
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'pr')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run PR fuzz shard
+        env:
+          FUZZ_PROFILE: pr
+          FUZZ_ITERATIONS: 250
+          FUZZ_SEED_OFFSET: ${{ matrix.shard * 250 }}
+          FUZZ_TIMEOUT_MS: 1800000
+        run: npm run test:fuzz
+
+  fuzz-nightly:
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'nightly')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run nightly fuzz shard
+        env:
+          FUZZ_PROFILE: nightly
+          FUZZ_ITERATIONS: 1000
+          FUZZ_SEED_OFFSET: ${{ matrix.shard * 1000 }}
+          FUZZ_TIMEOUT_MS: 3600000
+        run: npm run test:fuzz
+
+  fuzz-weekly:
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 6') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'weekly')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run weekly fuzz shard
+        env:
+          FUZZ_PROFILE: weekly
+          FUZZ_ITERATIONS: 2500
+          FUZZ_SEED_OFFSET: ${{ matrix.shard * 2500 }}
+          FUZZ_TIMEOUT_MS: 7200000
+        run: npm run test:fuzz

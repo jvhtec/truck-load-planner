@@ -108,7 +108,19 @@ export function validatePlacement(
     }
   }
 
-  // 3. Collision with other instances
+  // 3. Collision with fixed truck obstacles / keepouts
+  if (ctx.truck.obstacles && ctx.truck.obstacles.length > 0) {
+    for (let i = 0; i < ctx.truck.obstacles.length; i++) {
+      const obstacle = ctx.truck.obstacles[i];
+      if (aabbOverlap(candidate.aabb, obstacle)) {
+        violations.push('COLLISION');
+        details.collision = { with: 'OBSTACLE', obstacleIndex: i };
+        return { valid: false, violations, details };
+      }
+    }
+  }
+
+  // 4. Collision with other instances
   // Use spatial index when available to avoid full O(n) scan
   if (ctx.spatialIndex) {
     // Build instance lookup map for O(1) access
@@ -133,7 +145,7 @@ export function validatePlacement(
     }
   }
 
-  // 4. Support (if not on floor)
+  // 5. Support (if not on floor)
   const candBottomZ = bottomZ(candidate.aabb);
   if (candBottomZ > SUPPORT_EPSILON) {
     const supportRatio = calculateSupportRatio(candidate, ctx.instances);
@@ -145,7 +157,7 @@ export function validatePlacement(
     }
   }
 
-  // 5. Stacking rules
+  // 6. Stacking rules
   const supporters = findSupporters(candidate, ctx.instances);
   const instancesById = new Map(ctx.instances.map(inst => [inst.id, inst]));
   const candidateWeight = sku.weightKg;
@@ -192,7 +204,7 @@ export function validatePlacement(
     }
   }
 
-  // 6. Axle load (with candidate included)
+  // 7. Axle load (with candidate included)
   const allInstances = [...ctx.instances, candidate];
   const totalWeight = allInstances.reduce(
     (sum, inst) => sum + (ctx.skuWeights.get(inst.skuId) || 0),
@@ -219,7 +231,7 @@ export function validatePlacement(
     details.axleRear = { load: rearKg, max: ctx.truck.axle.maxRearKg };
   }
 
-  // 7. L/R balance (with candidate included)
+  // 8. L/R balance (with candidate included)
   const midY = ctx.truck.innerDims.y / 2;
   let leftKg = 0, rightKg = 0;
 
