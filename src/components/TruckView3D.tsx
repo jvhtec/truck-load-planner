@@ -366,6 +366,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
   const dragPlane = useRef(new Plane());
   const moved = useRef(false);
   const pointerId = useRef<number | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sizeMm = useMemo(
     () => ({
@@ -403,10 +404,18 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
   const numberTopOffsetZ = Math.max(size[2] * 0.34, textSize * 1.8);
   const numberSideOffsetY = Math.max(size[1] * 0.32, textSize * 1.8);
 
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
   const clearDrag = () => {
     isDragging.current = false;
     moved.current = false;
     pointerId.current = null;
+    cancelLongPress();
   };
 
   const toClampedPosition = (worldPoint: Vector3) => {
@@ -423,6 +432,15 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
       return;
     }
     onSelect();
+    // Start long-press timer — fires onOpenActions after 500 ms if the pointer doesn't move.
+    // This gives touch devices the same context-menu access as right-click on desktop.
+    const lpX = e.nativeEvent.clientX;
+    const lpY = e.nativeEvent.clientY;
+    longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null;
+      isDragging.current = false; // prevent drag completion after long-press
+      onOpenActions(lpX, lpY);
+    }, 500);
     pointerId.current = e.pointerId;
     const pointerTarget = e.target as Element & { setPointerCapture: (id: number) => void };
     pointerTarget.setPointerCapture(e.pointerId);
@@ -436,6 +454,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
   };
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
+    cancelLongPress(); // any movement cancels the long-press
     if (!viewLocked || !isDragging.current) return;
     e.stopPropagation();
     const hit = e.ray.intersectPlane(dragPlane.current, new Vector3());
@@ -448,6 +467,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
   };
 
   const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+    cancelLongPress();
     if (!viewLocked || !isDragging.current) return;
     e.stopPropagation();
     if (pointerId.current !== null) {
@@ -472,6 +492,12 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
       clearDrag();
     }
   }, [viewLocked]);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimer.current !== null) clearTimeout(longPressTimer.current);
+    };
+  }, []);
 
   return (
     <mesh

@@ -73,6 +73,7 @@ function App() {
   const [printing, setPrinting] = useState(false);
   const [lang, setLang] = useState<'es' | 'en'>('es');
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true);
+  const [metricsCollapsed, setMetricsCollapsed] = useState(true);
   const [showSpatialMetrics, setShowSpatialMetrics] = useState(false);
   const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('trucks');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -125,7 +126,7 @@ function App() {
         sideLeft: 'Lado Izquierdo',
         sideRight: 'Lado Derecho',
         iso: 'Iso',
-        viewHint: 'Clic derecho en una caja para acciones.',
+        viewHint: 'Mantén presionado o clic derecho en una caja para acciones.',
         showMetricsOverlay: 'Mostrar Panel Metricas',
         hideMetricsOverlay: 'Ocultar Panel Metricas',
         showSpatialMetrics: 'Mostrar Guias 3D',
@@ -230,7 +231,7 @@ function App() {
         sideLeft: 'Side Left',
         sideRight: 'Side Right',
         iso: 'Iso',
-        viewHint: 'Right-click a case for actions.',
+        viewHint: 'Long-press or right-click a case for actions.',
         showMetricsOverlay: 'Show Metrics Panel',
         hideMetricsOverlay: 'Hide Metrics Panel',
         showSpatialMetrics: 'Show 3D Guides',
@@ -740,6 +741,8 @@ function App() {
               <button onClick={() => { printOrderedItemList(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
               <button onClick={() => { setTheme(v => v === 'dark' ? 'light' : 'dark'); setShowMobileMenu(false); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
               <button onClick={() => { setLang(prev => prev === 'es' ? 'en' : 'es'); setShowMobileMenu(false); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
+              <button onClick={() => { handleExportCases(); setShowMobileMenu(false); }} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
+              <button onClick={() => { caseImportInputRef.current?.click(); setShowMobileMenu(false); }}>{t.importCasesCsv}</button>
               <button onClick={() => { actions.clearAll(); setShowMobileMenu(false); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
               <button
                 onClick={() => {
@@ -884,9 +887,31 @@ function App() {
               });
             }}
           />
+          {selectedInstance && selectedSku && (
+            <div className="mobile-case-actions">
+              <span className="mobile-case-name">#{itemNumbers.get(selectedInstance.id) ?? '-'} {selectedSku.name}</span>
+              <button onClick={() => {
+                const nextYaw = (((selectedInstance.yaw + 90) % 360) as Yaw);
+                actions.updateInstance(selectedInstance.id, { yaw: nextYaw });
+              }}>{t.rotate90}</button>
+              {selectedSku.tiltAllowed && (
+                <button onClick={() => {
+                  const current = selectedInstance.tilt ?? { y: 0 };
+                  actions.updateInstance(selectedInstance.id, { tilt: current.y === 90 ? { y: 0 } : { y: 90 } });
+                }}>{(selectedInstance.tilt?.y ?? 0) === 90 ? t.noTilt : t.tiltY90}</button>
+              )}
+              <button className="danger" onClick={() => actions.removeCase(selectedInstance.id)}>{t.remove}</button>
+            </div>
+          )}
           {showMetricsOverlay && (
-            <div className="metrics-overlay">
-              <MetricsPanel metrics={state.metrics} truck={state.truck} lang={lang} />
+            <div className={`metrics-overlay ${metricsCollapsed ? 'collapsed' : ''}`}>
+              <MetricsPanel
+                metrics={state.metrics}
+                truck={state.truck}
+                lang={lang}
+                collapsed={metricsCollapsed}
+                onToggleCollapsed={() => setMetricsCollapsed(v => !v)}
+              />
             </div>
           )}
           {state.validation && !state.validation.valid && (

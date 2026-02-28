@@ -94,6 +94,15 @@ describe('computeLeftRightBalance', () => {
     expect(rightKg).toBe(100);
     expect(leftKg).toBe(0);
   });
+
+  it('case spanning both sides with center at midline is classified consistently', () => {
+    // Span y=1000..1400 with center at 1200 (truck midline)
+    const inst = makeInst('a', 'SKU1', 0, 1000, 0, 1000, 400, 400);
+    const weights = new Map([['SKU1', 100]]);
+    const { leftKg, rightKg } = computeLeftRightBalance([inst], weights, truck);
+    expect(rightKg).toBe(100);
+    expect(leftKg).toBe(0);
+  });
 });
 
 describe('computeMetrics', () => {
@@ -111,5 +120,21 @@ describe('computeMetrics', () => {
     const weights = new Map([['SKU1', 3500]]); // 3500 / 4000 = 87.5%
     const m = computeMetrics([inst], weights, truck);
     expect(m.warnings.some(w => w.includes('Front axle'))).toBe(true);
+  });
+
+  it('metrics axle split: COM at front axle puts all cargo load on front', () => {
+    const inst = makeInst('a', 'SKU1', 900, 0, 0, 200, 2400, 400); // center x=1000
+    const weights = new Map([['SKU1', 1000]]);
+    const m = computeMetrics([inst], weights, truck);
+    expect(m.frontAxleKg).toBeCloseTo(1000);
+    expect(m.rearAxleKg).toBeCloseTo(0);
+  });
+
+  it('metrics axle split: COM at rear axle puts all cargo load on rear', () => {
+    const inst = makeInst('a', 'SKU1', 5400, 0, 0, 200, 2400, 400); // center x=5500
+    const weights = new Map([['SKU1', 1000]]);
+    const m = computeMetrics([inst], weights, truck);
+    expect(m.frontAxleKg).toBeCloseTo(0);
+    expect(m.rearAxleKg).toBeCloseTo(1000);
   });
 });

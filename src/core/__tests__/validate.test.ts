@@ -59,8 +59,10 @@ function makeCtx(instances: ReturnType<typeof createInstance>[] = [], skuMap?: M
     skuWeights.set(id, s.weightKg);
   });
   const supportGraph = new SupportGraph(skuWeights);
+  const placedSoFar: ReturnType<typeof createInstance>[] = [];
   for (const inst of instances) {
-    supportGraph.addInstance(inst, instances);
+    placedSoFar.push(inst);
+    supportGraph.addInstance(inst, placedSoFar);
   }
   return { truck: t, skus, instances, supportGraph, skuWeights };
 }
@@ -77,6 +79,7 @@ describe('validatePlacement – OUT_OF_BOUNDS', () => {
     const inst = createInstance('i1', baseSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
     const result = validatePlacement(inst, makeCtx());
     expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 });
 
@@ -94,7 +97,8 @@ describe('validatePlacement – COLLISION', () => {
     const ctx = makeCtx([first]);
     const second = createInstance('i2', baseSku, { x: 1000, y: CENTER_Y, z: 0 }, 0);
     const result = validatePlacement(second, ctx);
-    expect(result.violations).not.toContain('COLLISION');
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 });
 
@@ -118,6 +122,7 @@ describe('validatePlacement – INSUFFICIENT_SUPPORT', () => {
     const inst = createInstance('i1', baseSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
     const result = validatePlacement(inst, makeCtx());
     expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 
   it('accepts case fully supported by base below', () => {
@@ -125,7 +130,44 @@ describe('validatePlacement – INSUFFICIENT_SUPPORT', () => {
     const ctx = makeCtx([base]);
     const top = createInstance('top', baseSku, { x: 0, y: CENTER_Y, z: 400 }, 0);
     const result = validatePlacement(top, ctx);
-    expect(result.violations).not.toContain('INSUFFICIENT_SUPPORT');
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it('rejects when support ratio is below threshold with one supporter', () => {
+    const topSku: CaseSKU = { ...baseSku, skuId: 'TOP', minSupportRatio: 0.75 };
+    const halfBaseSku: CaseSKU = { ...baseSku, skuId: 'HALF', dims: { l: 500, w: 1200, h: 400 } };
+    const skus = new Map([
+      ['TOP', topSku],
+      ['HALF', halfBaseSku],
+    ]);
+    const base = createInstance('base', halfBaseSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const ctx = makeCtx([base], skus);
+    const top = createInstance('top', topSku, { x: 0, y: CENTER_Y, z: 400 }, 0);
+    const result = validatePlacement(top, ctx);
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContain('INSUFFICIENT_SUPPORT');
+  });
+
+  it('accepts when two supporters provide sufficient union support', () => {
+    const topSku: CaseSKU = { ...baseSku, skuId: 'TOP', minSupportRatio: 0.75 };
+    const supportSku: CaseSKU = {
+      ...baseSku,
+      skuId: 'SUP',
+      dims: { l: 400, w: 1200, h: 400 },
+      maxLoadAboveKg: 1000,
+    };
+    const skus = new Map([
+      ['TOP', topSku],
+      ['SUP', supportSku],
+    ]);
+    const leftSupport = createInstance('sup-left', supportSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const rightSupport = createInstance('sup-right', supportSku, { x: 600, y: CENTER_Y, z: 0 }, 0);
+    const ctx = makeCtx([leftSupport, rightSupport], skus);
+    const top = createInstance('top', topSku, { x: 0, y: CENTER_Y, z: 400 }, 0);
+    const result = validatePlacement(top, ctx);
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 });
 
@@ -137,6 +179,7 @@ describe('validatePlacement – BASE_NOT_ALLOWED / TOP_CONTACT_FORBIDDEN', () =>
     const top = createInstance('top', baseSku, { x: 0, y: CENTER_Y, z: 500 }, 0);
     const result = validatePlacement(top, ctx);
     expect(result.violations).toContain('BASE_NOT_ALLOWED');
+    expect(result.violations).toContain('TOP_CONTACT_FORBIDDEN');
   });
 });
 
@@ -149,7 +192,8 @@ describe('validatePlacement – LOAD_EXCEEDED', () => {
     const ctx = makeCtx([base], skus);
     const top = createInstance('top', lightTop, { x: 0, y: CENTER_Y, z: 400 }, 0);
     const result = validatePlacement(top, ctx);
-    expect(result.violations).not.toContain('LOAD_EXCEEDED');
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 
   it('rejects when placed weight exceeds maxLoadAboveKg', () => {
@@ -160,6 +204,40 @@ describe('validatePlacement – LOAD_EXCEEDED', () => {
     const ctx = makeCtx([base], skus);
     const top = createInstance('top', heavyTop, { x: 0, y: CENTER_Y, z: 400 }, 0);
     const result = validatePlacement(top, ctx);
+    expect(result.violations).toContain('LOAD_EXCEEDED');
+  });
+
+  it('rejects cumulative load on ancestor supporters', () => {
+    const base: CaseSKU = {
+      ...baseSku,
+      skuId: 'BASE60',
+      maxLoadAboveKg: 60,
+      weightKg: 30,
+    };
+    const mid: CaseSKU = {
+      ...baseSku,
+      skuId: 'MID20',
+      weightKg: 20,
+      maxLoadAboveKg: 100,
+    };
+    const top: CaseSKU = {
+      ...baseSku,
+      skuId: 'TOP50',
+      weightKg: 50,
+    };
+    const skus = new Map([
+      ['BASE60', base],
+      ['MID20', mid],
+      ['TOP50', top],
+    ]);
+
+    const baseInst = createInstance('base', base, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const midInst = createInstance('mid', mid, { x: 0, y: CENTER_Y, z: 400 }, 0);
+    const ctx = makeCtx([baseInst, midInst], skus);
+    const topInst = createInstance('top', top, { x: 0, y: CENTER_Y, z: 800 }, 0);
+
+    const result = validatePlacement(topInst, ctx);
+    expect(result.valid).toBe(false);
     expect(result.violations).toContain('LOAD_EXCEEDED');
   });
 });
@@ -174,6 +252,19 @@ describe('validatePlacement – axle loads', () => {
     const ctx = makeCtx([], skus);
     const result = validatePlacement(inst, ctx);
     expect(result.violations).toContain('AXLE_FRONT_OVER');
+    expect(result.violations).not.toContain('AXLE_REAR_OVER');
+  });
+
+  it('rejects case that pushes rear axle over limit', () => {
+    // 9000 kg centered at rear axle x=5500; maxRearKg=8000
+    const heavySku: CaseSKU = { ...baseSku, skuId: 'MEGA_REAR', weightKg: 9000 };
+    const skus = new Map([['MEGA_REAR', heavySku]]);
+    // x=5000..6000, center x=5500 (rear axle)
+    const inst = createInstance('m-rear', heavySku, { x: 5000, y: CENTER_Y, z: 0 }, 0);
+    const ctx = makeCtx([], skus);
+    const result = validatePlacement(inst, ctx);
+    expect(result.violations).toContain('AXLE_REAR_OVER');
+    expect(result.violations).not.toContain('AXLE_FRONT_OVER');
   });
 });
 
@@ -185,5 +276,22 @@ describe('validatePlacement – LEFT_RIGHT_IMBALANCE', () => {
     const inst = createInstance('h', heavySku, { x: 0, y: 0, z: 0 }, 0);
     const result = validatePlacement(inst, makeCtx([], skus, strictTruck));
     expect(result.violations).toContain('LEFT_RIGHT_IMBALANCE');
+  });
+
+  it('classifies centerline case deterministically when centerY == midY', () => {
+    const centerlineTruck: TruckType = {
+      ...truck,
+      balance: { maxLeftRightPercentDiff: 0 },
+    };
+    const centeredSku: CaseSKU = { ...baseSku, skuId: 'CENTERLINE', weightKg: 100 };
+    const skus = new Map([['CENTERLINE', centeredSku]]);
+    // baseSku at y=600..1800 => centerY=1200 exactly (truck midline)
+    const inst = createInstance('c', centeredSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const result = validatePlacement(inst, makeCtx([], skus, centerlineTruck));
+
+    expect(result.violations).toContain('LEFT_RIGHT_IMBALANCE');
+    const lr = result.details?.lrImbalance as { left: number; right: number } | undefined;
+    expect(lr?.left).toBe(0);
+    expect(lr?.right).toBe(100);
   });
 });
