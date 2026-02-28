@@ -7,6 +7,7 @@ interface SplashScreenProps {
 
 export function SplashScreen({ onComplete }: SplashScreenProps) {
     const [isFading, setIsFading] = useState(false);
+    const iconUrl = `${import.meta.env.BASE_URL}icon-192x192.png`;
 
     useEffect(() => {
         // Start fading out after 3.5 seconds
@@ -29,7 +30,7 @@ export function SplashScreen({ onComplete }: SplashScreenProps) {
         <div className={`splash-screen ${isFading ? 'fade-out' : ''}`}>
             <div className="splash-content">
                 <div className="splash-logo-container">
-                    <img src="/icon-192x192.png" alt="Truck Load Planner Logo" className="splash-logo" />
+                    <img src={iconUrl} alt="Truck Load Planner Logo" className="splash-logo" />
                 </div>
                 <h1 className="splash-title">Truck Load Planner</h1>
                 <div className="splash-loader"></div>

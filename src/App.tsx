@@ -185,6 +185,7 @@ interface ToastItem {
 type IOSNavigator = Navigator & { standalone?: boolean };
 
 function App() {
+  const iconUrl = `${import.meta.env.BASE_URL}icon-192x192.png`;
   const [state, actions] = usePlanner();
   const [autoPackQuantities, setAutoPackQuantities] = useState<Record<string, number>>({});
   const [planName, setPlanName] = useState('');
@@ -1483,7 +1484,7 @@ function App() {
         <div className="dialog-overlay" onClick={() => setShowAbout(false)}>
           <div className="dialog about-dialog" onClick={(e) => e.stopPropagation()}>
             <div style={{ textAlign: 'center', margin: '2rem 0' }}>
-              <img src="/icon-192x192.png" alt="Logo" style={{ width: 80, height: 80, borderRadius: 16, marginBottom: '1rem', boxShadow: 'var(--shadow-md)' }} />
+              <img src={iconUrl} alt="Logo" style={{ width: 80, height: 80, borderRadius: 16, marginBottom: '1rem', boxShadow: 'var(--shadow-md)' }} />
               <h2>{t.appTitle}</h2>
               <p style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>{t.createdBy}</p>
             </div>
