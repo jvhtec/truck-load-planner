@@ -37,25 +37,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: |
-          # Build with PR-specific base path
-          cat > vite.config.preview.ts << EOF
-          import { defineConfig } from 'vite'
-          import react from '@vitejs/plugin-react'
-          import path from 'path'
-          
-          export default defineConfig({
-            base: '/truck-load-planner/pr-${{ github.event.number }}/',
-            plugins: [react()],
-            resolve: {
-              alias: {
-                '@': path.resolve(__dirname, './src'),
-                '@core': path.resolve(__dirname, './src/core'),
-              },
-            },
-          })
-          EOF
-          npm run build -- --config vite.config.preview.ts
+          VITE_BASE_PATH: /truck-load-planner/pr-${{ github.event.number }}/
+        run: npm run build
       
       - name: Upload preview artifact
         uses: actions/upload-artifact@v4
