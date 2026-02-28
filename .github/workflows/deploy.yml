@@ -51,11 +51,33 @@ jobs:
           path: dist/
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
-          publish_branch: gh-pages
-          destination_dir: .
-          keep_files: true  # Keep PR preview directories
-          allow_empty_commit: true
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          # Save the new build outside the workspace before switching branches
+          cp -r dist /tmp/new-dist
+
+          # Check out (or initialize) the gh-pages branch
+          if git ls-remote --exit-code origin gh-pages > /dev/null 2>&1; then
+            git fetch origin gh-pages
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+          fi
+
+          # Clean root-level files but preserve PR preview directories (pr-N/)
+          # This ensures stale JS/CSS bundles don't linger and serve cached old builds
+          find . -maxdepth 1 \
+            ! -name '.' \
+            ! -name '.git' \
+            ! -path './pr-*' \
+            -exec rm -rf {} +
+
+          # Copy the new build into the root
+          cp -r /tmp/new-dist/. .
+
+          git add .
+          git diff --staged --quiet || git commit -m "Deploy ${{ github.sha }}"
+          git push origin gh-pages
