@@ -7,7 +7,7 @@ import { CaseCatalog } from './components/CaseCatalog';
 import { MetricsPanel } from './components/MetricsPanel';
 import { usePlanner } from './hooks/usePlanner';
 import type { SavedPlan } from './hooks/usePlanner';
-import type { CaseInstance, Yaw } from './core/types';
+import type { CaseInstance, ValidationError, ValidationResult, Yaw } from './core/types';
 import { computeOrientedAABB } from './core/geometry';
 import { SpatialIndex } from './core/spatial';
 import { SupportGraph } from './core/support';
@@ -35,13 +35,13 @@ function normalizeTilt(input?: { y?: number } | null): { y: 0 | 90 } {
 
 function buildItemNumberMap(instances: CaseInstance[]): Map<string, number> {
   const sorted = [...instances].sort((a, b) => {
-    const ay = bucket(centerY(a));
-    const by = bucket(centerY(b));
-    if (ay !== by) return ay - by; // left -> right
-
     const ax = bucket(centerX(a));
     const bx = bucket(centerX(b));
-    if (ax !== bx) return ax - bx; // front -> back
+    if (ax !== bx) return ax - bx; // front -> back (row order)
+
+    const ay = bucket(centerY(a));
+    const by = bucket(centerY(b));
+    if (ay !== by) return ay - by; // left -> right (across each row)
 
     const az = bucket(a.aabb.min.z);
     const bz = bucket(b.aabb.min.z);
@@ -59,6 +59,126 @@ function buildItemNumberMap(instances: CaseInstance[]): Map<string, number> {
   const map = new Map<string, number>();
   sorted.forEach((inst, idx) => map.set(inst.id, idx + 1));
   return map;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function pickPrimaryViolation(violations: ValidationError[]): ValidationError | null {
+  const priority: ValidationError[] = [
+    'LOAD_EXCEEDED',
+    'INSUFFICIENT_SUPPORT',
+    'BASE_NOT_ALLOWED',
+    'TOP_CONTACT_FORBIDDEN',
+    'COLLISION',
+    'OUT_OF_BOUNDS',
+    'AXLE_FRONT_OVER',
+    'AXLE_REAR_OVER',
+    'LEFT_RIGHT_IMBALANCE',
+    'INVALID_ORIENTATION',
+  ];
+  for (const code of priority) {
+    if (violations.includes(code)) return code;
+  }
+  return violations[0] ?? null;
+}
+
+function buildMoveToastMessage(result: ValidationResult, lang: 'es' | 'en'): string {
+  const code = pickPrimaryViolation(result.violations);
+  const details = result.details ?? {};
+
+  if (code === 'LOAD_EXCEEDED') {
+    const entries = Array.isArray(details.loadExceeded) ? details.loadExceeded : [];
+    const first = (entries[0] ?? {}) as Record<string, unknown>;
+    const maxAllowed = toFiniteNumber(first.maxAllowed);
+    const existingLoad = toFiniteNumber(first.existingLoad);
+    const candidateWeight = toFiniteNumber(first.candidateWeight);
+    if (maxAllowed !== null && existingLoad !== null && candidateWeight !== null) {
+      const projected = existingLoad + candidateWeight;
+      return lang === 'es'
+        ? `No se puede apilar: la base soporta ${maxAllowed.toFixed(0)} kg y quedaria con ${projected.toFixed(0)} kg encima.`
+        : `Cannot stack: base allows ${maxAllowed.toFixed(0)} kg and would carry ${projected.toFixed(0)} kg above.`;
+    }
+    return lang === 'es'
+      ? 'No se puede apilar: se excede la carga maxima permitida encima.'
+      : 'Cannot stack: load-above limit exceeded.';
+  }
+
+  if (code === 'INSUFFICIENT_SUPPORT') {
+    const supportRatio = toFiniteNumber(details.supportRatio);
+    const requiredRatio = toFiniteNumber(details.requiredRatio);
+    if (supportRatio !== null && requiredRatio !== null) {
+      return lang === 'es'
+        ? `No se puede apilar: soporte insuficiente (${(supportRatio * 100).toFixed(0)}%, minimo ${(requiredRatio * 100).toFixed(0)}%).`
+        : `Cannot stack: insufficient support (${(supportRatio * 100).toFixed(0)}%, minimum ${(requiredRatio * 100).toFixed(0)}%).`;
+    }
+    return lang === 'es'
+      ? 'No se puede apilar: soporte insuficiente.'
+      : 'Cannot stack: insufficient support.';
+  }
+
+  if (code === 'BASE_NOT_ALLOWED') {
+    return lang === 'es'
+      ? 'No se puede apilar: el item de abajo no permite carga arriba.'
+      : 'Cannot stack: item below cannot be used as base.';
+  }
+
+  if (code === 'TOP_CONTACT_FORBIDDEN') {
+    return lang === 'es'
+      ? 'No se puede apilar: el item de abajo no permite contacto superior.'
+      : 'Cannot stack: item below forbids top contact.';
+  }
+
+  if (code === 'COLLISION') {
+    return lang === 'es'
+      ? 'No se puede colocar ahi: colisiona con otro item.'
+      : 'Cannot place there: collides with another item.';
+  }
+
+  if (code === 'OUT_OF_BOUNDS') {
+    return lang === 'es'
+      ? 'No se puede colocar ahi: queda fuera de los limites del camion.'
+      : 'Cannot place there: outside truck bounds.';
+  }
+
+  if (code === 'AXLE_FRONT_OVER') {
+    return lang === 'es'
+      ? 'No se puede colocar: se excede la carga del eje delantero.'
+      : 'Cannot place: front axle load exceeded.';
+  }
+
+  if (code === 'AXLE_REAR_OVER') {
+    return lang === 'es'
+      ? 'No se puede colocar: se excede la carga del eje trasero.'
+      : 'Cannot place: rear axle load exceeded.';
+  }
+
+  if (code === 'LEFT_RIGHT_IMBALANCE') {
+    return lang === 'es'
+      ? 'No se puede colocar: desbalance lateral por encima del limite.'
+      : 'Cannot place: left/right imbalance over limit.';
+  }
+
+  if (code === 'INVALID_ORIENTATION') {
+    return lang === 'es'
+      ? 'No se puede colocar: orientacion o inclinacion invalida.'
+      : 'Cannot place: invalid orientation or tilt.';
+  }
+
+  return lang === 'es'
+    ? 'No se pudo mover el item por restricciones de validacion.'
+    : 'Could not move item due to placement constraints.';
+}
+
+interface ToastItem {
+  id: number;
+  message: string;
 }
 
 function App() {
@@ -85,8 +205,11 @@ function App() {
   const [showSpatialMetrics, setShowSpatialMetrics] = useState(false);
   const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('trucks');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const caseImportInputRef = useRef<HTMLInputElement | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const toastSeqRef = useRef(0);
+  const toastTimersRef = useRef<number[]>([]);
 
   const [showNewTruck, setShowNewTruck] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
@@ -321,6 +444,13 @@ function App() {
   }, [showLoadDialog]);
 
   useEffect(() => {
+    return () => {
+      toastTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      toastTimersRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
     const staged = new Set(state.instances.filter(i => i.staged).map(i => i.id));
     setSelectedStagedIds(prev => prev.filter(id => staged.has(id)));
   }, [state.instances]);
@@ -331,6 +461,17 @@ function App() {
       setMobileTab('view');
     }
   }, [state.truck?.truckId]);
+
+  const pushToast = (message: string) => {
+    const id = toastSeqRef.current + 1;
+    toastSeqRef.current = id;
+    setToasts(prev => [...prev, { id, message }]);
+    const timerId = window.setTimeout(() => {
+      setToasts(prev => prev.filter(toast => toast.id !== id));
+      toastTimersRef.current = toastTimersRef.current.filter(v => v !== timerId);
+    }, 4200);
+    toastTimersRef.current.push(timerId);
+  };
 
   if (state.loading) {
     return <div className="app loading"><div className="spinner" /><p>{t.loading}</p></div>;
@@ -743,6 +884,22 @@ function App() {
       </header>
 
       {importError && <div className="import-error" role="alert">{importError}</div>}
+      {toasts.length > 0 && (
+        <div className="toast-stack" aria-live="polite" aria-atomic="false">
+          {toasts.map(toast => (
+            <div key={toast.id} className="toast-item" role="status">
+              <span>{toast.message}</span>
+              <button
+                type="button"
+                onClick={() => setToasts(prev => prev.filter(ti => ti.id !== toast.id))}
+                aria-label={lang === 'es' ? 'Cerrar notificacion' : 'Dismiss notification'}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showMobileMenu && (
         <div className="mobile-menu-overlay" onClick={() => setShowMobileMenu(false)}>
@@ -891,7 +1048,16 @@ function App() {
               if (!instance) return false;
               let result = actions.updateInstance(instanceId, { position });
               if (!result.valid && position.z > 0) {
-                result = actions.updateInstance(instanceId, { position: { ...position, z: 0 } });
+                const reason = buildMoveToastMessage(result, lang);
+                const fallback = actions.updateInstance(instanceId, { position: { ...position, z: 0 } });
+                if (fallback.valid) {
+                  pushToast(lang === 'es' ? `${reason} Se movio al piso.` : `${reason} Moved to floor.`);
+                } else {
+                  pushToast(reason);
+                }
+                result = fallback;
+              } else if (!result.valid) {
+                pushToast(buildMoveToastMessage(result, lang));
               }
               if (!result.valid) console.warn('Move failed:', result);
               return result.valid;

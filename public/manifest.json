@@ -2,23 +2,23 @@
     "name": "Truck Load Planner",
     "short_name": "TL Planner",
     "description": "Deterministic, constraint-driven truck loading planner app with gorgeous premium UI.",
-    "start_url": "/",
+    "start_url": ".",
     "display": "standalone",
     "background_color": "#0B0F19",
     "theme_color": "#4f46e5",
     "icons": [
         {
-            "src": "/icon-192x192.png",
+            "src": "./icon-192x192.png",
             "sizes": "192x192",
             "type": "image/png"
         },
         {
-            "src": "/icon-512x512.png",
+            "src": "./icon-512x512.png",
             "sizes": "512x512",
             "type": "image/png"
         },
         {
-            "src": "/icon-512x512.png",
+            "src": "./icon-512x512.png",
             "sizes": "any",
             "type": "image/png",
             "purpose": "maskable"
