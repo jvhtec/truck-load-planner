@@ -15,6 +15,9 @@ concurrency:
 jobs:
   preview:
     runs-on: ubuntu-latest
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,10 +29,65 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Comment PR when preview env variables are missing
+        if: ${{ env.VITE_SUPABASE_URL == '' || env.VITE_SUPABASE_ANON_KEY == '' }}
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- pr-preview-env-missing -->';
+            const missing = [];
+            if (!process.env.VITE_SUPABASE_URL) missing.push('`VITE_SUPABASE_URL`');
+            if (!process.env.VITE_SUPABASE_ANON_KEY) missing.push('`VITE_SUPABASE_ANON_KEY`');
+
+            const body = [
+              marker,
+              '## Preview build blocked: missing environment variables',
+              '',
+              'This PR preview could not be built because the workflow is missing:',
+              ...missing.map(v => `- ${v}`),
+              '',
+              'Configure these in **Settings -> Secrets and variables -> Actions -> Variables** (recommended for fork-safe previews), or as repository secrets.',
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c =>
+              c.user?.type === 'Bot' &&
+              typeof c.body === 'string' &&
+              c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Validate preview environment variables
+        if: ${{ env.VITE_SUPABASE_URL == '' || env.VITE_SUPABASE_ANON_KEY == '' }}
+        run: |
+          echo "::error::Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY."
+          echo "::error::Set them as repository Actions variables (vars.*) for fork-safe PR previews, or as secrets."
+          exit 1
+
       - name: Build Preview
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_BASE_PATH: /truck-load-planner/
         run: npm run build
 
@@ -40,6 +98,32 @@ jobs:
           name: pr-${{ github.event.number }}-preview
           path: dist/
           retention-days: 7
+
+      - name: Clear missing env warning comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- pr-preview-env-missing -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c =>
+              c.user?.type === 'Bot' &&
+              typeof c.body === 'string' &&
+              c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+              });
+            }
 
       - name: Comment PR with artifact link
         uses: actions/github-script@v7

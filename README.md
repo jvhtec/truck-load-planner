@@ -425,7 +425,7 @@ Opening a pull request triggers `.github/workflows/pr-preview.yml`, which deploy
 
 ### Environment Variables for Deployment
 
-Set these as repository secrets / variables in GitHub Actions:
+Set these in GitHub Actions. Prefer repository **Variables** (`vars`) for these `VITE_*` values so PR previews from forks can build; secrets are used as fallback.
 
 | Variable | Description |
 |----------|-------------|
