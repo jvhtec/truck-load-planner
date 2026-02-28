@@ -35,6 +35,11 @@ function parseBoolean(raw: string): boolean {
   return value === '1' || value === 'true' || value === 'yes' || value === 'y';
 }
 
+function safeNumber(raw: string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function escapeCsv(value: string | number | boolean): string {
   const text = String(value);
   if (/[",\n]/.test(text)) {
@@ -93,9 +98,9 @@ export function parseCaseCsv(csvText: string): CaseSheetRow[] {
 
   const header = splitCsvLine(lines[0]);
   const headerMap = new Map<string, number>();
-  header.forEach((name, index) => {
+  for (const [index, name] of header.entries()) {
     headerMap.set(name.trim().toLowerCase(), index);
-  });
+  }
 
   const required = CASE_IO_HEADERS.map((h) => h.toLowerCase());
   for (const col of required) {
@@ -114,12 +119,12 @@ export function parseCaseCsv(csvText: string): CaseSheetRow[] {
 
     rows.push({
       boxName,
-      count: Math.max(0, Number(get('Count') || 0)),
+      count: Math.max(0, safeNumber(get('Count'))),
       colorHex: get('Color (HEX)') || '#6366f1',
-      length: Number(get('Length') || 0),
-      width: Number(get('Width') || 0),
-      height: Number(get('Height') || 0),
-      weight: Number(get('Weight') || 0),
+      length: safeNumber(get('Length')),
+      width: safeNumber(get('Width')),
+      height: safeNumber(get('Height')),
+      weight: safeNumber(get('Weight')),
       noTilt: parseBoolean(get('No Tilt')),
       noRotate: parseBoolean(get('No Rotate')),
       noStack: parseBoolean(get('No Stack')),

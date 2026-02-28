@@ -651,7 +651,7 @@ function App() {
         allowedYaw,
         canBeBase,
         topContactAllowed: canBeBase,
-        maxLoadAboveKg: canBeBase ? Math.max(row.weight * 2, row.weight) : 0,
+        maxLoadAboveKg: canBeBase ? row.weight * 2 : 0,
         minSupportRatio: 0.75,
         color: row.colorHex || '#6366f1',
         stackClass,
