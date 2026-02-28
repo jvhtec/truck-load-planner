@@ -116,7 +116,7 @@ function App() {
         autoPack: 'Auto Carga',
         autoPackQty: 'Cantidades Auto Carga',
         exportCasesCsv: 'Exportar Casos (CSV)',
-        importCasesCsv: 'Importar Casos (CSV/XLSX*)',
+        importCasesCsv: 'Importar Cases (CSV/XLSX*)',
         importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
         importCasesFailed: 'Error al importar casos',
         lockView: 'Bloquear Vista',
@@ -626,7 +626,7 @@ function App() {
     const lowerName = file.name.toLowerCase();
     if (lowerName.endsWith('.xlsx')) {
       alert(t.importCasesHelp);
-      return;
+      throw new Error(t.importCasesHelp);
     }
     const csvText = await file.text();
     const rows = parseCaseCsv(csvText);
@@ -646,12 +646,12 @@ function App() {
         name: row.boxName,
         dims: { l: row.length, w: row.width, h: row.height },
         weightKg: row.weight,
-        uprightOnly: row.noTilt,
+        uprightOnly: row.noRotate,
         tiltAllowed: !row.noTilt,
         allowedYaw,
         canBeBase,
         topContactAllowed: canBeBase,
-        maxLoadAboveKg: canBeBase ? Math.max(row.weight * 2, row.weight) : 0,
+        maxLoadAboveKg: canBeBase ? row.weight * 2 : 0,
         minSupportRatio: 0.75,
         color: row.colorHex || '#6366f1',
         stackClass,
