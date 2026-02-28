@@ -1070,6 +1070,11 @@ body {
   display: none;
 }
 
+/* Mobile floating action bar for selected case — hidden on desktop */
+.mobile-case-actions {
+  display: none;
+}
+
 .color-input {
   display: flex;
   align-items: center;
@@ -1497,6 +1502,60 @@ body {
     right: 0.5rem;
     max-width: none;
   }
+
+  /* ─── Mobile Floating Case Action Bar ─── */
+  .mobile-case-actions {
+    display: flex;
+    position: absolute;
+    bottom: 0.85rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid var(--border-color);
+    border-radius: 2rem;
+    padding: 0.45rem 0.9rem;
+    backdrop-filter: blur(6px);
+    max-width: calc(100% - 1.5rem);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  .mobile-case-name {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--accent-green);
+    width: 100%;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
+  }
+
+  .mobile-case-actions button {
+    padding: 0.4rem 0.85rem;
+    border: 1px solid var(--border-color);
+    border-radius: 1.5rem;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    cursor: pointer;
+    min-height: 36px;
+    white-space: nowrap;
+  }
+
+  .mobile-case-actions button:active {
+    filter: brightness(1.2);
+  }
+
+  .mobile-case-actions button.danger {
+    border-color: var(--accent-red);
+    color: var(--accent-red);
+  }
 }
 
 /* ─── Light theme mobile overrides ─── */
@@ -1512,5 +1571,9 @@ body {
 
   .app.theme-light .mobile-tab-bar {
     background: var(--bg-card);
+  }
+
+  .app.theme-light .mobile-case-actions {
+    background: rgba(248, 250, 252, 0.95);
   }
 }
