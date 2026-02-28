@@ -77,6 +77,7 @@ function App() {
   const [mobileTab, setMobileTab] = useState<'view' | 'trucks' | 'cases'>('trucks');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const caseImportInputRef = useRef<HTMLInputElement | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const [showNewTruck, setShowNewTruck] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
@@ -117,6 +118,7 @@ function App() {
         exportCasesCsv: 'Exportar Casos (CSV)',
         importCasesCsv: 'Importar Casos (CSV/XLSX*)',
         importCasesHelp: '* XLSX no disponible en este entorno; exporta como CSV para importar.',
+        importCasesFailed: 'Error al importar casos',
         lockView: 'Bloquear Vista',
         unlockView: 'Desbloquear Vista',
         top: 'Superior',
@@ -221,6 +223,7 @@ function App() {
         exportCasesCsv: 'Export Cases (CSV)',
         importCasesCsv: 'Import Cases (CSV/XLSX*)',
         importCasesHelp: '* XLSX is not available in this environment; export as CSV to import.',
+        importCasesFailed: 'Failed to import cases',
         lockView: 'Lock View',
         unlockView: 'Unlock View',
         top: 'Top',
@@ -607,7 +610,9 @@ function App() {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
   };
 
   const handleExportCases = () => {
@@ -617,6 +622,7 @@ function App() {
   };
 
   const handleImportCases = async (file: File) => {
+    setImportError(null);
     const lowerName = file.name.toLowerCase();
     if (lowerName.endsWith('.xlsx')) {
       alert(t.importCasesHelp);
@@ -685,6 +691,8 @@ function App() {
               try {
                 await handleImportCases(file);
               } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                setImportError(`${t.importCasesFailed}: ${message}`);
                 console.error('Import failed', err);
               } finally {
                 e.currentTarget.value = '';
@@ -713,6 +721,8 @@ function App() {
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect y="3" width="20" height="2" rx="1" fill="currentColor"/><rect y="9" width="20" height="2" rx="1" fill="currentColor"/><rect y="15" width="20" height="2" rx="1" fill="currentColor"/></svg>
         </button>
       </header>
+
+      {importError && <div className="import-error" role="alert">{importError}</div>}
 
       {showMobileMenu && (
         <div className="mobile-menu-overlay" onClick={() => setShowMobileMenu(false)}>

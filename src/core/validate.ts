@@ -23,9 +23,9 @@ import {
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
 import { computeAxleLoads } from './weight';
+import { FLOOR_ONLY_TOKEN } from '../lib/tokens';
 
 const SUPPORT_EPSILON = 5; // 5mm
-const FLOOR_ONLY_TOKEN = 'FLOOR_ONLY';
 
 export interface ValidatorContext {
   truck: TruckType;

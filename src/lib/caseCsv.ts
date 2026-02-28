@@ -1,4 +1,5 @@
 import type { CaseSKU } from '../core/types';
+import { FLOOR_ONLY_TOKEN } from './tokens';
 
 export const CASE_IO_HEADERS = [
   'BoxName',
@@ -14,7 +15,6 @@ export const CASE_IO_HEADERS = [
   'On floor',
 ] as const;
 
-const FLOOR_ONLY_TOKEN = 'FLOOR_ONLY';
 
 export interface CaseSheetRow {
   boxName: string;
@@ -47,10 +47,20 @@ function splitCsvLine(line: string): string[] {
   const cells: string[] = [];
   let current = '';
   let inQuotes = false;
+  let fieldQuoted = false;
+
+  const pushCurrent = () => {
+    cells.push(fieldQuoted ? current : current.trim());
+    current = '';
+    fieldQuoted = false;
+  };
 
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
     if (ch === '"') {
+      if (!inQuotes && current.trim().length === 0) {
+        fieldQuoted = true;
+      }
       if (inQuotes && line[i + 1] === '"') {
         current += '"';
         i += 1;
@@ -61,15 +71,14 @@ function splitCsvLine(line: string): string[] {
     }
 
     if (ch === ',' && !inQuotes) {
-      cells.push(current.trim());
-      current = '';
+      pushCurrent();
       continue;
     }
 
     current += ch;
   }
 
-  cells.push(current.trim());
+  pushCurrent();
   return cells;
 }
 
@@ -84,7 +93,9 @@ export function parseCaseCsv(csvText: string): CaseSheetRow[] {
 
   const header = splitCsvLine(lines[0]);
   const headerMap = new Map<string, number>();
-  header.forEach((name, index) => headerMap.set(name.trim().toLowerCase(), index));
+  header.forEach((name, index) => {
+    headerMap.set(name.trim().toLowerCase(), index);
+  });
 
   const required = CASE_IO_HEADERS.map((h) => h.toLowerCase());
   for (const col of required) {

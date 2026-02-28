@@ -1,8 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { parseCaseCsv, formatCaseCsv, buildStackClass } from '../../lib/caseCsv';
 import type { CaseSKU } from '../types';
+import { FLOOR_ONLY_TOKEN } from '../../lib/tokens';
 
 describe('caseCsv', () => {
+
+  it('uses shared FLOOR_ONLY token constant', () => {
+    expect(FLOOR_ONLY_TOKEN).toBe('FLOOR_ONLY');
+  });
+
   it('parses required schema in fixed column order', () => {
     const text = [
       'BoxName,Count,Color (HEX),Length,Width,Height,Weight,No Tilt,No Rotate,No Stack,On floor',
@@ -24,6 +30,17 @@ describe('caseCsv', () => {
       noStack: true,
       onFloor: true,
     });
+  });
+
+
+  it('preserves intentional whitespace for quoted CSV fields', () => {
+    const text = [
+      'BoxName,Count,Color (HEX),Length,Width,Height,Weight,No Tilt,No Rotate,No Stack,On floor',
+      '"  Padded Box  ",1,#112233,100,100,100,10,false,false,false,false',
+    ].join('\n');
+
+    const rows = parseCaseCsv(text);
+    expect(rows[0]?.boxName).toBe('  Padded Box  ');
   });
 
   it('exports fixed header order', () => {
@@ -78,5 +95,7 @@ describe('caseCsv', () => {
   it('adds and removes floor-only token', () => {
     expect(buildStackClass(undefined, true)).toBe('FLOOR_ONLY');
     expect(buildStackClass('A,FLOOR_ONLY', false)).toBe('A');
+    expect(buildStackClass(FLOOR_ONLY_TOKEN, true)).toBe(FLOOR_ONLY_TOKEN);
+    expect(buildStackClass('A', false)).toBe('A');
   });
 });
