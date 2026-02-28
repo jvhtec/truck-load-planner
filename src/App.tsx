@@ -41,7 +41,7 @@ function buildItemNumberMap(instances: CaseInstance[]): Map<string, number> {
 
     const ay = bucket(centerY(a));
     const by = bucket(centerY(b));
-    if (ay !== by) return ay - by; // left -> right (across each row)
+    if (ay !== by) return by - ay; // right -> left (across each row)
 
     const az = bucket(a.aabb.min.z);
     const bz = bucket(b.aabb.min.z);
@@ -485,6 +485,10 @@ function App() {
   const selectedSku = selectedInstance ? state.skus.get(selectedInstance.skuId) : null;
   const stagedInstances = state.instances.filter(i => i.staged);
   const placedInstances = state.instances.filter(i => !i.staged);
+  const caseInstanceCounts = state.instances.reduce((acc, inst) => {
+    acc.set(inst.skuId, (acc.get(inst.skuId) ?? 0) + 1);
+    return acc;
+  }, new Map<string, number>());
   const hasStagedItems = stagedInstances.length > 0;
   const hasAutoLoadQuantities = state.cases.some((c) => Number(autoPackQuantities[c.skuId] ?? 0) > 0);
   const itemNumbers = buildItemNumberMap(placedInstances);
@@ -824,6 +828,18 @@ function App() {
     }
   };
 
+  const handleAutoLoadAction = () => {
+    const stagedIds = state.instances.filter(i => i.staged).map(i => i.id);
+    if (stagedIds.length > 0) {
+      const res = actions.autoPlaceInstances(stagedIds);
+      if (!res.valid) console.warn('Autoplace all staged failed', res);
+      setSelectedStagedIds([]);
+      return;
+    }
+    if (!hasAutoLoadQuantities) return;
+    actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
+  };
+
   return (
     <div className={`app theme-${theme}`}>
       <header className="app-header">
@@ -862,17 +878,7 @@ function App() {
           />
           <button onClick={() => actions.clearAll()} disabled={state.instances.length === 0}>{t.clearAll}</button>
           <button
-            onClick={() => {
-              const stagedIds = state.instances.filter(i => i.staged).map(i => i.id);
-              if (stagedIds.length > 0) {
-                const res = actions.autoPlaceInstances(stagedIds);
-                if (!res.valid) console.warn('Autoplace all staged failed', res);
-                setSelectedStagedIds([]);
-                return;
-              }
-              if (!hasAutoLoadQuantities) return;
-              actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
-            }}
+            onClick={handleAutoLoadAction}
             disabled={!state.truck || (!hasStagedItems && !hasAutoLoadQuantities)}
           >
             {t.autoPack}
@@ -922,14 +928,7 @@ function App() {
               <button onClick={() => { actions.clearAll(); setShowMobileMenu(false); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
               <button
                 onClick={() => {
-                  const stagedIds = state.instances.filter(i => i.staged).map(i => i.id);
-                  if (stagedIds.length > 0) {
-                    const res = actions.autoPlaceInstances(stagedIds);
-                    if (!res.valid) console.warn('Autoplace all staged failed', res);
-                    setSelectedStagedIds([]);
-                  } else if (hasAutoLoadQuantities) {
-                    actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
-                  }
+                  handleAutoLoadAction();
                   setShowMobileMenu(false);
                 }}
                 disabled={!state.truck || (!hasStagedItems && !hasAutoLoadQuantities)}
@@ -1072,6 +1071,15 @@ function App() {
               });
             }}
           />
+          {state.truck && (
+            <button
+              className="mobile-autoload-fab"
+              onClick={handleAutoLoadAction}
+              disabled={!hasStagedItems && !hasAutoLoadQuantities}
+            >
+              {t.autoPack}
+            </button>
+          )}
           {selectedInstance && selectedSku && (
             <div className="mobile-case-actions">
               <span className="mobile-case-name">#{itemNumbers.get(selectedInstance.id) ?? '-'} {selectedSku.name}</span>
@@ -1107,6 +1115,7 @@ function App() {
         <aside className={`sidebar right ${rightCollapsed ? 'desktop-hidden' : ''}`} data-panel="cases">
           <CaseCatalog
             cases={state.cases}
+            instanceCounts={caseInstanceCounts}
             lang={lang}
             onPlace={(skuId, pos, yaw) => {
               const result = actions.placeCase(skuId, pos, yaw);
