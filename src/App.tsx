@@ -181,6 +181,8 @@ interface ToastItem {
   message: string;
 }
 
+type IOSNavigator = Navigator & { standalone?: boolean };
+
 function App() {
   const [state, actions] = usePlanner();
   const [autoPackQuantities, setAutoPackQuantities] = useState<Record<string, number>>({});
@@ -461,6 +463,48 @@ function App() {
       setMobileTab('view');
     }
   }, [state.truck?.truckId]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    root.dataset.theme = theme;
+    body.dataset.theme = theme;
+
+    const themeColor = theme === 'dark' ? '#0B0F19' : '#f8fafc';
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', themeColor);
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const standaloneMedia = window.matchMedia('(display-mode: standalone)');
+    const iosNavigator = window.navigator as IOSNavigator;
+    const isIOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+
+    const applyIOSPwaClass = () => {
+      const isStandalone = standaloneMedia.matches || iosNavigator.standalone === true;
+      root.classList.toggle('ios-pwa', isIOS && isStandalone);
+    };
+
+    applyIOSPwaClass();
+
+    if (typeof standaloneMedia.addEventListener === 'function') {
+      standaloneMedia.addEventListener('change', applyIOSPwaClass);
+    } else if (typeof standaloneMedia.addListener === 'function') {
+      standaloneMedia.addListener(applyIOSPwaClass);
+    }
+
+    return () => {
+      if (typeof standaloneMedia.removeEventListener === 'function') {
+        standaloneMedia.removeEventListener('change', applyIOSPwaClass);
+      } else if (typeof standaloneMedia.removeListener === 'function') {
+        standaloneMedia.removeListener(applyIOSPwaClass);
+      }
+      root.classList.remove('ios-pwa');
+    };
+  }, []);
 
   const pushToast = (message: string) => {
     const id = toastSeqRef.current + 1;
