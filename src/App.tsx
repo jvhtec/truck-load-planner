@@ -627,7 +627,9 @@ function App() {
     const existing = new Set(state.cases.map((c) => c.skuId));
 
     for (const row of rows) {
-      if (!row.boxName || row.length <= 0 || row.width <= 0 || row.height <= 0 || row.weight <= 0) continue;
+      const hasValidDims = Number.isFinite(row.length) && Number.isFinite(row.width) && Number.isFinite(row.height) && Number.isFinite(row.weight)
+        && row.length > 0 && row.width > 0 && row.height > 0 && row.weight > 0;
+      if (!row.boxName || !hasValidDims) continue;
       const skuId = sanitizeSkuId(row.boxName, existing);
       const noRotate = row.noRotate;
       const allowedYaw: Yaw[] = noRotate ? [0] : [0, 90, 180, 270];

@@ -51,6 +51,30 @@ describe('caseCsv', () => {
     expect(lines[1]).toContain('A,9,#abcdef,1000,600,400,33,true,true,true,true');
   });
 
+
+  it('exports No Stack=true when top contact is blocked', () => {
+    const cases: CaseSKU[] = [
+      {
+        skuId: 'sku-top-blocked',
+        name: 'TopBlocked',
+        color: '#abcdef',
+        dims: { l: 1200, w: 800, h: 500 },
+        weightKg: 50,
+        uprightOnly: false,
+        allowedYaw: [0, 90],
+        tiltAllowed: true,
+        canBeBase: true,
+        topContactAllowed: false,
+        maxLoadAboveKg: 100,
+        minSupportRatio: 0.75,
+      },
+    ];
+
+    const csv = formatCaseCsv(cases, { 'sku-top-blocked': 1 });
+    const lines = csv.trim().split('\n');
+    expect(lines[1]).toContain('TopBlocked,1,#abcdef,1200,800,500,50,false,false,true,false');
+  });
+
   it('adds and removes floor-only token', () => {
     expect(buildStackClass(undefined, true)).toBe('FLOOR_ONLY');
     expect(buildStackClass('A,FLOOR_ONLY', false)).toBe('A');

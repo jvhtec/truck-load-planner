@@ -124,7 +124,7 @@ export function formatCaseCsv(cases: CaseSKU[], quantities: Record<string, numbe
   for (const c of cases) {
     const noRotate = c.allowedYaw.length <= 1;
     const noTilt = !c.tiltAllowed;
-    const noStack = !c.canBeBase || c.maxLoadAboveKg <= 0;
+    const noStack = !c.canBeBase || !c.topContactAllowed || c.maxLoadAboveKg <= 0;
     const onFloor = (c.stackClass ?? '').toUpperCase().split(/\s*[,;|]\s*/).includes(FLOOR_ONLY_TOKEN);
 
     const row = [
