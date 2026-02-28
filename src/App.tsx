@@ -825,7 +825,7 @@ function App() {
       .grid { display: grid; grid-template-columns: repeat(2, 105mm); width: 210mm; }
       .label { width: 105mm; height: 74.25mm; border: 0.5pt solid #d1d5db; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
       .label-header { padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 2.5mm; flex-shrink: 0; height: 22mm; }
-      .label-logo { height: 14mm; width: auto; object-fit: contain; flex-shrink: 0; }
+      .label-logo { max-height: 14mm; max-width: 55mm; width: auto; height: auto; object-fit: contain; flex-shrink: 0; }
       .label-num { font-size: 30pt; font-weight: 900; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); line-height: 1; margin-left: auto; }
       .label-body { padding: 2mm 3.5mm; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 0.5mm; }
       .label-name { font-weight: 900; line-height: 1.15; word-break: break-word; }
