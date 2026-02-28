@@ -53,6 +53,7 @@ interface DbCaseSku {
   stack_class: string | null;
   color_hex: string | null;
   tilt_allowed: boolean | null;
+  is_container: boolean | null;
 }
 
 interface DbLoadPlan {
@@ -107,6 +108,7 @@ function dbToCaseSku(db: DbCaseSku): CaseSKU {
     stackClass: db.stack_class || undefined,
     color: db.color_hex || undefined,
     tiltAllowed: db.tilt_allowed ?? false,
+    isContainer: db.is_container ?? false,
   };
 }
 
@@ -163,6 +165,7 @@ interface CreateCaseInput {
   stackClass?: string;
   color?: string;
   tiltAllowed?: boolean;
+  isContainer?: boolean;
 }
 
 const AUTOPLACE_STEP_MM = 100;
@@ -907,6 +910,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       min_support_ratio: input.minSupportRatio,
       stack_class: input.stackClass || null,
       color_hex: input.color || null,
+      is_container: input.isContainer ?? false,
     });
 
     if (error) throw error;
@@ -926,6 +930,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         minSupportRatio: input.minSupportRatio,
         stackClass: input.stackClass,
         color: input.color,
+        isContainer: input.isContainer ?? false,
       };
       const cases = [created, ...prev.cases];
       const skus = new Map(prev.skus);
@@ -952,6 +957,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     if (updates.minSupportRatio !== undefined) payload.min_support_ratio = updates.minSupportRatio;
     if (updates.stackClass !== undefined) payload.stack_class = updates.stackClass || null;
     if (updates.color !== undefined) payload.color_hex = updates.color || null;
+    if (updates.isContainer !== undefined) payload.is_container = updates.isContainer;
 
     const { data, error } = await supabase
       .from('case_skus')
@@ -979,6 +985,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         ...(updates.minSupportRatio !== undefined ? { minSupportRatio: updates.minSupportRatio } : {}),
         ...(updates.stackClass !== undefined ? { stackClass: updates.stackClass } : {}),
         ...(updates.color !== undefined ? { color: updates.color } : {}),
+        ...(updates.isContainer !== undefined ? { isContainer: updates.isContainer } : {}),
         ...(updates.dims ? { dims: updates.dims } : {}),
       };
 

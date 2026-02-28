@@ -539,6 +539,11 @@ body {
   color: black;
 }
 
+.tag.container {
+  background: var(--accent-blue, #3b82f6);
+  color: white;
+}
+
 .placement-controls {
   margin-top: 1rem;
   padding-top: 1rem;
@@ -1227,6 +1232,14 @@ body {
   flex-direction: column;
   gap: 8px;
   padding-bottom: 1rem;
+}
+
+.cl-no-containers {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 0;
+  padding: 0.5rem 0;
 }
 
 .cl-note-item {

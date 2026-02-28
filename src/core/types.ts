@@ -54,6 +54,9 @@ export interface CaseSKU {
   
   // Optional stack classification
   stackClass?: string;
+
+  // Whether this case can hold loose contents (shows notes field on labels)
+  isContainer?: boolean;
 }
 
 // ============================================================================
