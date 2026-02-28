@@ -203,6 +203,10 @@ function App() {
   const [selectedStagedIds, setSelectedStagedIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [printing, setPrinting] = useState(false);
+  const [showCaseLabelsDialog, setShowCaseLabelsDialog] = useState(false);
+  const [caseLabelsLogo, setCaseLabelsLogo] = useState<string>('');
+  const [caseLabelsFont, setCaseLabelsFont] = useState<'clear' | 'handwritten'>('clear');
+  const [caseLabelsNotes, setCaseLabelsNotes] = useState<Record<string, string>>({});
   const [lang, setLang] = useState<'es' | 'en'>('es');
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true);
   const [metricsCollapsed, setMetricsCollapsed] = useState(true);
@@ -332,6 +336,17 @@ function App() {
       placementFloor: 'en suelo',
       placementOnTop: 'encima de item',
       placementManual: 'segun coordenadas',
+      printCaseLabels: 'Etiquetas de Caja',
+      caseLabelsTitle: 'Etiquetas de Carga',
+      caseLabelsSetup: 'Configurar Etiquetas',
+      labelLogo: 'Logo (PNG/JPG/SVG)',
+      labelFont: 'Estilo de Fuente',
+      labelFontClear: 'Limpio',
+      labelFontHandwritten: 'Manuscrito',
+      labelNotes: 'Contenido / Notas',
+      labelTruck: 'Camion',
+      labelDate: 'Fecha',
+      labelPrint: 'Imprimir Etiquetas',
       mobileTabView: 'Vista 3D',
       mobileTabTrucks: 'Camiones',
       mobileTabCases: 'Cajas',
@@ -439,6 +454,17 @@ function App() {
       placementFloor: 'on floor',
       placementOnTop: 'on top of item',
       placementManual: 'by coordinates',
+      printCaseLabels: 'Case Labels',
+      caseLabelsTitle: 'Load Labels',
+      caseLabelsSetup: 'Set Up Labels',
+      labelLogo: 'Logo (PNG/JPG/SVG)',
+      labelFont: 'Font Style',
+      labelFontClear: 'Clean',
+      labelFontHandwritten: 'Handwritten',
+      labelNotes: 'Contents / Notes',
+      labelTruck: 'Truck',
+      labelDate: 'Date',
+      labelPrint: 'Print Labels',
       mobileTabView: '3D View',
       mobileTabTrucks: 'Trucks',
       mobileTabCases: 'Cases',
@@ -744,6 +770,84 @@ function App() {
     }
   };
 
+  const printCaseLabels = () => {
+    if (!state.truck || placedInstances.length === 0) return;
+    const sorted = [...placedInstances].sort(
+      (a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999)
+    );
+    const isHandwritten = caseLabelsFont === 'handwritten';
+    const bodyFont = isHandwritten ? "'Caveat', cursive" : 'Segoe UI, Arial, sans-serif';
+    const fontLink = isHandwritten
+      ? `<link rel="preconnect" href="https://fonts.googleapis.com">
+         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&display=swap" rel="stylesheet">`
+      : '';
+    const logoHtml = caseLabelsLogo ? `<img src="${caseLabelsLogo}" class="label-logo" />` : '';
+
+    const labels = sorted.map((inst) => {
+      const sku = state.skus.get(inst.skuId);
+      const num = itemNumbers.get(inst.id) ?? '?';
+      const color = sku?.color ?? '#6b7280';
+      const name = sku?.name ?? inst.skuId;
+      const dims = sku ? `${sku.dims.l} \u00d7 ${sku.dims.w} \u00d7 ${sku.dims.h} mm` : '\u2013';
+      const weight = sku ? `${sku.weightKg} kg` : '\u2013';
+      const note = caseLabelsNotes[inst.id] ?? '';
+      return `
+        <div class="label">
+          <div class="label-header" style="background:${color};">
+            ${logoHtml}
+            <span class="label-num">#${num}</span>
+          </div>
+          <div class="label-body">
+            <div class="label-name">${name}</div>
+            <div class="label-sku">${inst.skuId}</div>
+            <div class="label-row"><span class="label-key">Dims</span><span>${dims}</span></div>
+            <div class="label-row"><span class="label-key">Weight</span><span>${weight}</span></div>
+            ${note ? `<div class="label-note">${note}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    const html = `
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${t.caseLabelsTitle}</title>
+    ${fontLink}
+    <style>
+      @page { size: A4 portrait; margin: 0; }
+      * { box-sizing: border-box; }
+      body { font-family: ${bodyFont}; margin: 0; color: #111827; }
+      .screen-header { padding: 10px 14px; font-family: Segoe UI, Arial, sans-serif; border-bottom: 1px solid #e5e7eb; }
+      .screen-header h1 { margin: 0 0 2px; font-size: 15px; }
+      .screen-header .meta { color: #6b7280; font-size: 11px; }
+      .grid { display: grid; grid-template-columns: repeat(2, 105mm); width: 210mm; }
+      .label { width: 105mm; height: 74.25mm; border: 0.5pt solid #d1d5db; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
+      .label-header { padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 2.5mm; flex-shrink: 0; height: 20mm; }
+      .label-logo { height: 12mm; width: auto; object-fit: contain; flex-shrink: 0; }
+      .label-num { font-size: 26pt; font-weight: 900; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.45); line-height: 1; margin-left: auto; }
+      .label-body { padding: 2mm 3.5mm; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      .label-name { font-size: 10pt; font-weight: 700; line-height: 1.2; word-break: break-word; margin-bottom: 0.5mm; }
+      .label-sku { font-size: 7pt; color: #6b7280; font-family: monospace; margin-bottom: 1.5mm; }
+      .label-row { display: flex; justify-content: space-between; font-size: 7.5pt; margin-top: 0.8mm; }
+      .label-key { color: #6b7280; }
+      .label-note { margin-top: 1.5mm; font-size: 7.5pt; color: #374151; border-top: 0.5pt solid #e5e7eb; padding-top: 1.5mm; white-space: pre-wrap; word-break: break-word; flex: 1; overflow: hidden; }
+      @media print { .screen-header { display: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="screen-header">
+      <h1>${t.caseLabelsTitle}</h1>
+      <div class="meta">${t.labelTruck}: ${state.truck.name} &nbsp;|&nbsp; ${t.labelDate}: ${new Date().toLocaleString(lang === 'es' ? 'es-ES' : 'en-US')} &nbsp;|&nbsp; ${t.reportItems}: ${placedInstances.length} &nbsp;|&nbsp; A4 · 8 ${lang === 'es' ? 'por hoja' : 'per sheet'} · 105 × 74.25 mm</div>
+    </div>
+    <div class="grid">${labels}</div>
+  </body>
+</html>`;
+
+    openPrintWindow(html);
+    setShowCaseLabelsDialog(false);
+  };
+
   const printReportPdf = async () => {
     if (!state.truck || placedInstances.length === 0 || printing) return;
     setPrinting(true);
@@ -912,6 +1016,7 @@ function App() {
           <button onClick={() => setShowSaveDialog(true)} disabled={!state.truck || placedInstances.length === 0}>{t.savePlan}</button>
           <button onClick={printReportPdf} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
           <button onClick={printOrderedItemList} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
+          <button onClick={() => setShowCaseLabelsDialog(true)} disabled={!state.truck || placedInstances.length === 0}>{t.printCaseLabels}</button>
           <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
           <button onClick={() => setLang((prev) => (prev === 'es' ? 'en' : 'es'))}>{lang === 'es' ? 'EN' : 'ES'}</button>
           <button onClick={() => setShowAbout(true)}>{t.about}</button>
@@ -982,6 +1087,7 @@ function App() {
               <button onClick={() => { setShowLoadDialog(true); setShowMobileMenu(false); }}>{t.loadPlan}</button>
               <button onClick={() => { printReportPdf(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
               <button onClick={() => { printOrderedItemList(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
+              <button onClick={() => { setShowCaseLabelsDialog(true); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0}>{t.printCaseLabels}</button>
               <button onClick={() => { setTheme(v => v === 'dark' ? 'light' : 'dark'); setShowMobileMenu(false); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
               <button onClick={() => { setLang(prev => prev === 'es' ? 'en' : 'es'); setShowMobileMenu(false); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
               <button onClick={() => { setShowAbout(true); setShowMobileMenu(false); }}>{t.about}</button>
@@ -1476,6 +1582,77 @@ function App() {
               </div>
             )}
             <div className="dialog-actions"><button onClick={() => setShowLoadDialog(false)}>{t.close}</button></div>
+          </div>
+        </div>
+      )}
+
+      {showCaseLabelsDialog && (
+        <div className="dialog-overlay" onClick={() => setShowCaseLabelsDialog(false)}>
+          <div className="dialog" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <h3>{t.caseLabelsSetup}</h3>
+
+            <div className="form-field" style={{ marginBottom: 12 }}>
+              <span>{t.labelLogo}</span>
+              <input type="file" accept="image/*" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => setCaseLabelsLogo((ev.target?.result as string) ?? '');
+                reader.readAsDataURL(file);
+              }} />
+              {caseLabelsLogo && (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <img src={caseLabelsLogo} alt="logo preview" style={{ height: 36, objectFit: 'contain' }} />
+                  <button onClick={() => setCaseLabelsLogo('')}>{t.remove}</button>
+                </div>
+              )}
+            </div>
+
+            <div className="form-field" style={{ marginBottom: 16 }}>
+              <span>{t.labelFont}</span>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button
+                  className={caseLabelsFont === 'clear' ? 'primary' : ''}
+                  onClick={() => setCaseLabelsFont('clear')}
+                >
+                  {t.labelFontClear}
+                </button>
+                <button
+                  className={caseLabelsFont === 'handwritten' ? 'primary' : ''}
+                  onClick={() => setCaseLabelsFont('handwritten')}
+                >
+                  {t.labelFontHandwritten}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ maxHeight: 320, overflowY: 'auto', marginBottom: 16 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{t.labelNotes}</span>
+              {[...placedInstances]
+                .sort((a, b) => (itemNumbers.get(a.id) ?? 9999) - (itemNumbers.get(b.id) ?? 9999))
+                .map((inst) => {
+                  const sku = state.skus.get(inst.skuId);
+                  const num = itemNumbers.get(inst.id) ?? '?';
+                  return (
+                    <div key={inst.id} style={{ marginTop: 8 }}>
+                      <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        #{num} {sku?.name ?? inst.skuId}
+                      </label>
+                      <textarea
+                        style={{ width: '100%', marginTop: 4, fontSize: 12, resize: 'vertical', minHeight: 48, boxSizing: 'border-box' }}
+                        placeholder={lang === 'es' ? 'Contenido / notas...' : 'Contents / notes...'}
+                        value={caseLabelsNotes[inst.id] ?? ''}
+                        onChange={(e) => setCaseLabelsNotes((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                      />
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="dialog-actions">
+              <button onClick={() => setShowCaseLabelsDialog(false)}>{t.cancel}</button>
+              <button className="primary" onClick={printCaseLabels}>{t.labelPrint}</button>
+            </div>
           </div>
         </div>
       )}
