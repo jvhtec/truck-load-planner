@@ -118,7 +118,7 @@ export interface TruckType {
 // Validation Error Codes
 // ============================================================================
 
-export type ValidationError = 
+export type ValidationError =
   | 'OUT_OF_BOUNDS'
   | 'COLLISION'
   | 'INVALID_ORIENTATION'
@@ -128,7 +128,14 @@ export type ValidationError =
   | 'LOAD_EXCEEDED'
   | 'AXLE_FRONT_OVER'
   | 'AXLE_REAR_OVER'
-  | 'LEFT_RIGHT_IMBALANCE';
+  | 'LEFT_RIGHT_IMBALANCE'
+  // v3 multi-axle / tractor-trailer codes
+  | 'AXLE_STEER_OVER'
+  | 'AXLE_DRIVE_OVER'
+  | 'AXLE_TRAILER_OVER'
+  | 'KINGPIN_OVER'
+  | 'STEER_UNDER_MIN'
+  | 'LEFT_RIGHT_IMBALANCE_TRAILER';
 
 export interface ValidationResult {
   valid: boolean;
@@ -156,9 +163,14 @@ export interface LoadMetrics {
   rightWeightKg: number;
   lrImbalancePercent: number;
   maxStackHeightMm: number;
-  
+
   // Warnings (near thresholds)
   warnings: string[];
+
+  // v3: per-axle-group breakdown (present for multi-axle / tractor-trailer)
+  axleGroupLoads?: AxleGroupLoad[];
+  kingpinKg?: number;
+  kingpinMaxKg?: number;
 }
 
 // ============================================================================
@@ -169,5 +181,78 @@ export interface AutoPackResult {
   placed: CaseInstance[];
   unplaced: string[]; // skuIds that couldn't be placed
   metrics: LoadMetrics;
+  trailerMetrics?: TrailerMetrics; // present only for tractor-trailer
   reasonSummary: Record<ValidationError, number>;
+}
+
+// ============================================================================
+// Multi-Axle / Tractor-Trailer Types  (Engine v3.x)
+// ============================================================================
+
+/** One physical axle group with its position and load limits. */
+export interface AxleGroup {
+  id: string;      // e.g. "steer" | "drive" | "trailer" | "tag"
+  xMm: number;     // X position along this body's cargo-space origin (mm)
+  maxKg: number;   // maximum legal load on this group (kg)
+  minKg?: number;  // optional minimum load (e.g. steer axle steering authority)
+}
+
+/** Per-axle-group load result used in metrics display. */
+export interface AxleGroupLoad {
+  id: string;
+  loadKg: number;
+  maxKg: number;
+  minKg?: number;
+  utilizationPct: number;
+  status: 'ok' | 'warning' | 'over' | 'under';
+}
+
+/** A rigid vehicle body with N axle groups (replaces TruckType for multi-axle rigs). */
+export interface RigidVehicle {
+  vehicleId: string;
+  name: string;
+  /** Interior cargo space (mm). X = front→rear, Y = left→right, Z = floor→ceiling. */
+  innerDimsMm: { x: number; y: number; z: number };
+  emptyWeightKg: number;
+  /** X coordinate of the vehicle's own empty-vehicle COM (mm, from front of body). */
+  emptyComXmm: number;
+  axleGroups: AxleGroup[];
+  balance: { maxLeftRightPercentDiff: number };
+  obstacles?: AABB[];
+}
+
+/** Tractor + semi-trailer coupled via a fifth-wheel/kingpin. */
+export interface TractorTrailer {
+  id: string;
+  name: string;
+  tractor: RigidVehicle;
+  trailer: RigidVehicle; // cargo is placed in the trailer body
+  coupling: {
+    /** Kingpin X offset measured from the front of the trailer body (mm). */
+    kingpinX_onTrailerMm: number;
+    /** Fifth-wheel X offset measured from the front of the tractor body (mm). */
+    kingpinX_onTractorMm: number;
+    maxKingpinKg?: number;
+  };
+}
+
+/** Discriminated union for all supported vehicle configurations. */
+export type VehicleConfig =
+  | { kind: 'rigid'; vehicle: TruckType }
+  | { kind: 'multi-axle'; vehicle: RigidVehicle }
+  | { kind: 'tractor-trailer'; vehicle: TractorTrailer };
+
+/** Complete metrics for a tractor-trailer rig placement. */
+export interface TrailerMetrics {
+  totalWeightKg: number;
+  trailerAxleLoads: AxleGroupLoad[];
+  kingpinKg: number;
+  kingpinMaxKg?: number;
+  kingpinStatus: 'ok' | 'warning' | 'over';
+  tractorAxleLoads: AxleGroupLoad[];
+  leftWeightKg: number;
+  rightWeightKg: number;
+  lrImbalancePercent: number;
+  maxStackHeightMm: number;
+  warnings: string[];
 }

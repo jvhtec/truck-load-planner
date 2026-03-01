@@ -10,6 +10,8 @@ import type {
   ValidationResult,
   ValidationError,
   AABB,
+  VehicleConfig,
+  TractorTrailer,
 } from './types';
 import {
   aabbContains,
@@ -23,12 +25,23 @@ import {
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
 import { computeAxleLoads } from './weight';
+import {
+  computeTrailerAxleLoads,
+  computeTractorAxleLoads,
+  computeRigidVehicleAxleLoads,
+} from './trailerStatics';
 import { FLOOR_ONLY_TOKEN } from '../lib/tokens';
 
 const SUPPORT_EPSILON = 5; // 5mm
 
 export interface ValidatorContext {
   truck: TruckType;
+  /**
+   * When set, overrides the legacy single-axle-pair validation for axle loads,
+   * L/R balance, and bounds checking. Must be set together with `truck` for
+   * geometry fallback (use rigidVehicleToTruckType for the trailer body).
+   */
+  vehicle?: VehicleConfig;
   skus: Map<string, CaseSKU>;
   instances: CaseInstance[];
   supportGraph: SupportGraph;
@@ -204,58 +217,9 @@ export function validatePlacement(
     }
   }
 
-  // 7. Axle load (with candidate included)
+  // 7 + 8. Axle loads and L/R balance (with candidate included)
   const allInstances = [...ctx.instances, candidate];
-  const totalWeight = allInstances.reduce(
-    (sum, inst) => sum + (ctx.skuWeights.get(inst.skuId) || 0),
-    0
-  );
-
-  // Calculate cargo COM X
-  let comX = 0;
-  for (const inst of allInstances) {
-    const w = ctx.skuWeights.get(inst.skuId) || 0;
-    comX += ((inst.aabb.min.x + inst.aabb.max.x) / 2) * w;
-  }
-  comX = totalWeight > 0 ? comX / totalWeight : 0;
-
-  const { frontKg, rearKg } = computeAxleLoads(totalWeight, comX, ctx.truck);
-
-  if (frontKg > ctx.truck.axle.maxFrontKg) {
-    violations.push('AXLE_FRONT_OVER');
-    details.axleFront = { load: frontKg, max: ctx.truck.axle.maxFrontKg };
-  }
-
-  if (rearKg > ctx.truck.axle.maxRearKg) {
-    violations.push('AXLE_REAR_OVER');
-    details.axleRear = { load: rearKg, max: ctx.truck.axle.maxRearKg };
-  }
-
-  // 8. L/R balance (with candidate included)
-  const midY = ctx.truck.innerDims.y / 2;
-  let leftKg = 0, rightKg = 0;
-
-  for (const inst of allInstances) {
-    const w = ctx.skuWeights.get(inst.skuId) || 0;
-    const centerY = (inst.aabb.min.y + inst.aabb.max.y) / 2;
-    if (centerY < midY) leftKg += w;
-    else rightKg += w;
-  }
-
-  // Divide by truck payload capacity (not current cargo weight) so that placing
-  // early items doesn't produce a spurious 100% imbalance reading.
-  const maxPayloadKg = Math.max(1, ctx.truck.axle.maxFrontKg + ctx.truck.axle.maxRearKg - ctx.truck.emptyWeightKg);
-  const imbalance = (Math.abs(leftKg - rightKg) / maxPayloadKg) * 100;
-
-  if (imbalance > ctx.truck.balance.maxLeftRightPercentDiff) {
-    violations.push('LEFT_RIGHT_IMBALANCE');
-    details.lrImbalance = {
-      left: leftKg,
-      right: rightKg,
-      percent: imbalance,
-      max: ctx.truck.balance.maxLeftRightPercentDiff,
-    };
-  }
+  checkAxleAndBalance(allInstances, ctx, violations, details);
 
   return {
     valid: violations.length === 0,
@@ -329,4 +293,191 @@ function collectSupportChainIds(instanceId: string, supportGraph: SupportGraph):
   }
 
   return result;
+}
+
+// ============================================================================
+// Axle load + L/R balance dispatch (v3 multi-vehicle)
+// ============================================================================
+
+function computeWeightAndComX(
+  allInstances: CaseInstance[],
+  skuWeights: Map<string, number>,
+): { totalWeight: number; comX: number } {
+  let totalWeight = 0;
+  let comXNum = 0;
+  for (const inst of allInstances) {
+    const w = skuWeights.get(inst.skuId) || 0;
+    totalWeight += w;
+    comXNum += ((inst.aabb.min.x + inst.aabb.max.x) / 2) * w;
+  }
+  return {
+    totalWeight,
+    comX: totalWeight > 0 ? comXNum / totalWeight : 0,
+  };
+}
+
+function checkLRBalance(
+  allInstances: CaseInstance[],
+  skuWeights: Map<string, number>,
+  midY: number,
+  maxPayloadKg: number,
+  maxDiffPercent: number,
+  violationCode: ValidationError,
+  violations: ValidationError[],
+  details: Record<string, unknown>,
+): void {
+  let leftKg = 0;
+  let rightKg = 0;
+  for (const inst of allInstances) {
+    const w = skuWeights.get(inst.skuId) || 0;
+    const centerY = (inst.aabb.min.y + inst.aabb.max.y) / 2;
+    if (centerY < midY) leftKg += w;
+    else rightKg += w;
+  }
+  const imbalance = (Math.abs(leftKg - rightKg) / Math.max(1, maxPayloadKg)) * 100;
+  if (imbalance > maxDiffPercent) {
+    violations.push(violationCode);
+    details.lrImbalance = { left: leftKg, right: rightKg, percent: imbalance, max: maxDiffPercent };
+  }
+}
+
+function checkAxleAndBalance(
+  allInstances: CaseInstance[],
+  ctx: ValidatorContext,
+  violations: ValidationError[],
+  details: Record<string, unknown>,
+): void {
+  const { vehicle } = ctx;
+
+  // ── Tractor-trailer path ──
+  if (vehicle?.kind === 'tractor-trailer') {
+    checkTractorTrailerAxleLoads(allInstances, ctx.skuWeights, vehicle.vehicle, violations, details);
+    // L/R balance on trailer body
+    const trailer = vehicle.vehicle.trailer;
+    const maxPayload = Math.max(
+      1,
+      trailer.axleGroups.reduce((s, ag) => s + ag.maxKg, 0) - trailer.emptyWeightKg,
+    );
+    checkLRBalance(
+      allInstances,
+      ctx.skuWeights,
+      trailer.innerDimsMm.y / 2,
+      maxPayload,
+      trailer.balance.maxLeftRightPercentDiff,
+      'LEFT_RIGHT_IMBALANCE_TRAILER',
+      violations,
+      details,
+    );
+    return;
+  }
+
+  // ── Multi-axle rigid path ──
+  if (vehicle?.kind === 'multi-axle') {
+    const rv = vehicle.vehicle;
+    const { totalWeight, comX } = computeWeightAndComX(allInstances, ctx.skuWeights);
+    const axleLoads = computeRigidVehicleAxleLoads(totalWeight, comX, rv);
+    for (const ag of axleLoads) {
+      if (ag.status === 'over') {
+        const code: ValidationError = ag.id === 'front' ? 'AXLE_STEER_OVER' : 'AXLE_DRIVE_OVER';
+        violations.push(code);
+        details[`axle_${ag.id}`] = { load: ag.loadKg, max: ag.maxKg };
+      }
+    }
+    const maxPayload = Math.max(
+      1,
+      rv.axleGroups.reduce((s, ag) => s + ag.maxKg, 0) - rv.emptyWeightKg,
+    );
+    checkLRBalance(
+      allInstances,
+      ctx.skuWeights,
+      rv.innerDimsMm.y / 2,
+      maxPayload,
+      rv.balance.maxLeftRightPercentDiff,
+      'LEFT_RIGHT_IMBALANCE',
+      violations,
+      details,
+    );
+    return;
+  }
+
+  // ── Legacy TruckType path (unchanged) ──
+  const { totalWeight, comX } = computeWeightAndComX(allInstances, ctx.skuWeights);
+  const { frontKg, rearKg } = computeAxleLoads(totalWeight, comX, ctx.truck);
+
+  if (frontKg > ctx.truck.axle.maxFrontKg) {
+    violations.push('AXLE_FRONT_OVER');
+    details.axleFront = { load: frontKg, max: ctx.truck.axle.maxFrontKg };
+  }
+  if (rearKg > ctx.truck.axle.maxRearKg) {
+    violations.push('AXLE_REAR_OVER');
+    details.axleRear = { load: rearKg, max: ctx.truck.axle.maxRearKg };
+  }
+
+  const maxPayloadKg = Math.max(
+    1,
+    ctx.truck.axle.maxFrontKg + ctx.truck.axle.maxRearKg - ctx.truck.emptyWeightKg,
+  );
+  checkLRBalance(
+    allInstances,
+    ctx.skuWeights,
+    ctx.truck.innerDims.y / 2,
+    maxPayloadKg,
+    ctx.truck.balance.maxLeftRightPercentDiff,
+    'LEFT_RIGHT_IMBALANCE',
+    violations,
+    details,
+  );
+}
+
+function checkTractorTrailerAxleLoads(
+  allInstances: CaseInstance[],
+  skuWeights: Map<string, number>,
+  rig: TractorTrailer,
+  violations: ValidationError[],
+  details: Record<string, unknown>,
+): void {
+  const { totalWeight: totalCargo, comX } = computeWeightAndComX(allInstances, skuWeights);
+
+  const { trailerAxleKg, kingpinKg, trailerAxleGroup } = computeTrailerAxleLoads(
+    totalCargo,
+    comX,
+    rig.trailer,
+    rig.coupling.kingpinX_onTrailerMm,
+  );
+
+  const { steerKg, driveKg, steerGroup, driveGroup } = computeTractorAxleLoads(
+    rig.tractor.emptyWeightKg,
+    rig.tractor.emptyComXmm,
+    kingpinKg,
+    rig.coupling.kingpinX_onTractorMm,
+    rig.tractor,
+  );
+
+  // Trailer axle
+  if (trailerAxleGroup.id !== 'none' && trailerAxleKg > trailerAxleGroup.maxKg) {
+    violations.push('AXLE_TRAILER_OVER');
+    details.axleTrailer = { load: trailerAxleKg, max: trailerAxleGroup.maxKg };
+  }
+
+  // Kingpin
+  if (rig.coupling.maxKingpinKg !== undefined && kingpinKg > rig.coupling.maxKingpinKg) {
+    violations.push('KINGPIN_OVER');
+    details.kingpin = { load: kingpinKg, max: rig.coupling.maxKingpinKg };
+  }
+
+  // Steer axle
+  if (steerKg > steerGroup.maxKg) {
+    violations.push('AXLE_STEER_OVER');
+    details.axleSteer = { load: steerKg, max: steerGroup.maxKg };
+  }
+  if (steerGroup.minKg !== undefined && steerKg < steerGroup.minKg) {
+    violations.push('STEER_UNDER_MIN');
+    details.steerUnder = { load: steerKg, min: steerGroup.minKg };
+  }
+
+  // Drive axle
+  if (driveKg > driveGroup.maxKg) {
+    violations.push('AXLE_DRIVE_OVER');
+    details.axleDrive = { load: driveKg, max: driveGroup.maxKg };
+  }
 }
