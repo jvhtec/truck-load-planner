@@ -126,12 +126,17 @@ function attemptPlacement(
     let bestPlacement: { instance: CaseInstance; score: number } | null = null;
     const lastViolations: ValidationError[] = [];
 
-    // Filter obviously out-of-bounds anchors early
-    const candidateAnchors = anchors.filter(a =>
-      a.x < truck.innerDims.x &&
-      a.y < truck.innerDims.y &&
-      a.z < truck.innerDims.z
-    );
+    // Filter obviously out-of-bounds anchors early and sort so that
+    // bottom-front-left positions are evaluated first.  When two placements
+    // tie in score the first one found wins (strict >), so the ordering
+    // produces deterministic, compact layouts.
+    const candidateAnchors = anchors
+      .filter(a =>
+        a.x < truck.innerDims.x &&
+        a.y < truck.innerDims.y &&
+        a.z < truck.innerDims.z
+      )
+      .sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y);
 
     // Try each anchor × each allowed yaw
     for (const anchor of candidateAnchors) {
@@ -371,20 +376,17 @@ function scorePlacement(
   // Prefer lower height (pack from floor up)
   const heightPenalty = a.min.z / truck.innerDims.z;
 
-  // Prefer placing toward axle midpoint
-  const xCenter = (a.min.x + a.max.x) / 2;
-  const axleMidX = (truck.axle.frontX + truck.axle.rearX) / 2;
-  const axleProximity = Math.abs(xCenter - axleMidX) / truck.innerDims.x;
+  // Prefer placing toward the front of the truck (front-to-back compaction).
+  // The previous axleProximity metric pulled boxes toward the axle midpoint
+  // from both ends, creating two separated clusters with a gap between them.
+  const xPenalty = (a.min.x + a.max.x) / 2 / truck.innerDims.x;
 
-  // Prefer placing toward Y center (minimize L/R imbalance)
-  const yCenter = (a.min.y + a.max.y) / 2;
-  const truckMidY = truck.innerDims.y / 2;
-  const yDeviationPenalty = Math.abs(yCenter - truckMidY) / truck.innerDims.y;
+  // Mild left-to-right tiebreaker so that rows fill deterministically from the
+  // left wall.  The previous yDeviationPenalty pushed boxes toward the Y-center
+  // which actively fought wall-hugging and created lateral gaps.
+  const yTiebreaker = a.min.y / truck.innerDims.y;
 
   // Reward tight compaction: count faces touching walls or other placed boxes.
-  // This directly incentivises gap-free packing rather than the former approach
-  // which proxied compactness via axle-balance ratio (and could penalise valid
-  // wall-hugging positions).
   let touchCount = 0;
 
   // Wall / floor adjacency
@@ -392,6 +394,7 @@ function scorePlacement(
   if (a.min.x <= TOUCH_DIST) touchCount += 1; // front wall
   if (a.min.y <= TOUCH_DIST) touchCount += 1; // left wall
   if (a.max.y >= truck.innerDims.y - TOUCH_DIST) touchCount += 1; // right wall
+  if (a.max.x >= truck.innerDims.x - TOUCH_DIST) touchCount += 1; // rear wall
 
   // Box-to-box face adjacency
   for (const p of placed) {
@@ -408,17 +411,21 @@ function scorePlacement(
       if (Math.abs(a.min.y - b.max.y) <= TOUCH_DIST) touchCount++;
       if (Math.abs(a.max.y - b.min.y) <= TOUCH_DIST) touchCount++;
     }
+    // Vertical face adjacency (stacking)
+    if (xOverlap && yOverlap) {
+      if (Math.abs(a.min.z - b.max.z) <= TOUCH_DIST) touchCount++;
+    }
   }
 
-  // Normalise to [0, 1]: max realistic touches = floor(2) + front(1) + side(1) + 2 box faces = 6
-  const adjacencyBonus = Math.min(touchCount, 6) / 6;
+  // Normalise to [0, 1]: max realistic = floor(2) + walls(3) + 3 box faces = 8
+  const adjacencyBonus = Math.min(touchCount, 8) / 8;
 
   // Combined score (higher = better placement)
   return (
-    -heightPenalty * 2.0
-    - axleProximity * 1.0
-    - yDeviationPenalty * 1.5
-    + adjacencyBonus * 3.0  // raised weight: tight packing is the primary spatial goal
+    -heightPenalty * 3.0        // pack bottom-up
+    - xPenalty * 2.0            // pack front-to-back
+    - yTiebreaker * 0.1         // mild L→R tiebreaker
+    + adjacencyBonus * 5.0      // tight packing is the primary spatial goal
   );
 }
 
@@ -444,7 +451,15 @@ function scoreResult(
   // Penalize L/R imbalance
   score -= result.metrics.lrImbalancePercent * weights.lrBalance;
 
-  // Reward compactness (fewer unplaced = better, already captured in placed count)
+  // Reward compactness: prefer layouts that use less truck length (tighter pack)
+  if (result.placed.length > 0) {
+    let maxExtentX = 0;
+    for (const p of result.placed) {
+      if (p.aabb.max.x > maxExtentX) maxExtentX = p.aabb.max.x;
+    }
+    score -= (maxExtentX / truck.innerDims.x) * 200;
+  }
+
   score -= result.unplaced.length * 500;
 
   return score;
