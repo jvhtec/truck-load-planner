@@ -23,9 +23,10 @@ import {
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
 import { computeAxleLoads } from './weight';
-import { FLOOR_ONLY_TOKEN } from '../lib/tokens';
+import { parseStackClass } from '../lib/stackRules';
 
 const SUPPORT_EPSILON = 5; // 5mm
+const MIN_SUPPORT_CONTACT_RATIO = 0.01; // ignore tiny edge slivers as structural support
 
 export interface ValidatorContext {
   truck: TruckType;
@@ -86,13 +87,15 @@ export function validatePlacement(
     return { valid: false, violations, details };
   }
 
-  const isFloorOnly = (sku.stackClass ?? '')
-    .toUpperCase()
-    .split(/\s*[,;|]\s*/)
-    .includes(FLOOR_ONLY_TOKEN);
-  if (isFloorOnly && bottomZ(candidate.aabb) > SUPPORT_EPSILON) {
+  const stackRules = parseStackClass(sku.stackClass);
+  if (stackRules.floorOnly && bottomZ(candidate.aabb) > SUPPORT_EPSILON) {
     violations.push('INVALID_ORIENTATION');
     details.orientation = { error: 'Floor-only SKU must be placed on floor' };
+    return { valid: false, violations, details };
+  }
+  if (stackRules.tiltRequired && tiltY !== 90) {
+    violations.push('INVALID_ORIENTATION');
+    details.orientation = { error: 'SKU requires tilt Y=90' };
     return { valid: false, violations, details };
   }
   if (tiltY === 90) {
@@ -159,6 +162,19 @@ export function validatePlacement(
 
   // 6. Stacking rules
   const supporters = findSupporters(candidate, ctx.instances);
+  if (stackRules.maxStackLevel !== undefined) {
+    const candidateStackLevel = computeCandidateStackLevel(candidate, supporters, ctx.supportGraph);
+    details.stackLevel = candidateStackLevel;
+    details.maxStackLevel = stackRules.maxStackLevel;
+    if (candidateStackLevel > stackRules.maxStackLevel) {
+      violations.push('INVALID_ORIENTATION');
+      details.orientation = {
+        error: `Stack level ${candidateStackLevel} exceeds max level ${stackRules.maxStackLevel}`,
+      };
+      return { valid: false, violations, details };
+    }
+  }
+
   const instancesById = new Map(ctx.instances.map(inst => [inst.id, inst]));
   const candidateWeight = sku.weightKg;
   const checkedLoadSupporters = new Set<string>();
@@ -274,6 +290,7 @@ function calculateSupportRatio(
 ): number {
   const candBottomZ = bottomZ(candidate.aabb);
   const candBottomArea = bottomArea(candidate.aabb);
+  const minContactArea = candBottomArea * MIN_SUPPORT_CONTACT_RATIO;
 
   if (candBottomArea === 0) return 0;
 
@@ -285,7 +302,10 @@ function calculateSupportRatio(
     const otherTopZ = topZ(other.aabb);
 
     if (isApproximately(otherTopZ, candBottomZ, SUPPORT_EPSILON)) {
-      supportedArea += intersectionAreaXZ(candidate.aabb, other.aabb);
+      const overlapArea = intersectionAreaXZ(candidate.aabb, other.aabb);
+      if (overlapArea >= minContactArea) {
+        supportedArea += overlapArea;
+      }
     }
   }
 
@@ -298,6 +318,7 @@ function findSupporters(
 ): CaseInstance[] {
   const supporters: CaseInstance[] = [];
   const candBottomZ = bottomZ(candidate.aabb);
+  const minContactArea = bottomArea(candidate.aabb) * MIN_SUPPORT_CONTACT_RATIO;
 
   for (const other of instances) {
     if (other.id === candidate.id) continue;
@@ -306,7 +327,7 @@ function findSupporters(
 
     if (isApproximately(otherTopZ, candBottomZ, SUPPORT_EPSILON)) {
       const overlap = intersectionAreaXZ(candidate.aabb, other.aabb);
-      if (overlap > 0) {
+      if (overlap >= minContactArea) {
         supporters.push(other);
       }
     }
@@ -329,4 +350,60 @@ function collectSupportChainIds(instanceId: string, supportGraph: SupportGraph):
   }
 
   return result;
+}
+
+function computeCandidateStackLevel(
+  candidate: CaseInstance,
+  supporters: CaseInstance[],
+  supportGraph: SupportGraph
+): number {
+  if (bottomZ(candidate.aabb) <= SUPPORT_EPSILON) {
+    return 1;
+  }
+  if (supporters.length === 0) {
+    return 1;
+  }
+
+  const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  let maxSupporterLevel = 1;
+
+  for (const supporter of supporters) {
+    const level = computeInstanceStackLevel(supporter.id, supportGraph, memo, visiting);
+    if (level > maxSupporterLevel) {
+      maxSupporterLevel = level;
+    }
+  }
+
+  return maxSupporterLevel + 1;
+}
+
+function computeInstanceStackLevel(
+  instanceId: string,
+  supportGraph: SupportGraph,
+  memo: Map<string, number>,
+  visiting: Set<string>
+): number {
+  const cached = memo.get(instanceId);
+  if (cached !== undefined) return cached;
+  if (visiting.has(instanceId)) return 1;
+
+  visiting.add(instanceId);
+  const supporters = Array.from(supportGraph.getSupporters(instanceId));
+  let level = 1;
+
+  if (supporters.length > 0) {
+    let maxSupporterLevel = 1;
+    for (const supporterId of supporters) {
+      const supporterLevel = computeInstanceStackLevel(supporterId, supportGraph, memo, visiting);
+      if (supporterLevel > maxSupporterLevel) {
+        maxSupporterLevel = supporterLevel;
+      }
+    }
+    level = maxSupporterLevel + 1;
+  }
+
+  visiting.delete(instanceId);
+  memo.set(instanceId, level);
+  return level;
 }

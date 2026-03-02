@@ -11,11 +11,19 @@ import type {
   ValidationError,
   Yaw,
 } from './types';
-import { createInstance, computeOrientedAABB, topZ } from './geometry';
+import {
+  createInstance,
+  computeOrientedAABB,
+  topZ,
+  intersectionAreaXZ,
+  bottomArea,
+  isApproximately,
+} from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
 import { computeMetrics } from './weight';
+import { parseStackClass } from '../lib/stackRules';
 
 // ============================================================================
 // Auto-Pack Configuration
@@ -121,7 +129,7 @@ function attemptPlacement(
 
   // Shuffle cases within same priority tier for multi-start diversity
   const shuffled = shuffleWithinTiers(casesToPlace, attemptNumber);
-  const preferredYawsBySku = buildPreferredYawMap(truck, skus, skuQuantities);
+  const preferredOrientationsBySku = buildPreferredOrientationMap(truck, skus, skuQuantities);
 
   for (const pc of shuffled) {
     const sku = skuMap.get(pc.skuId);
@@ -134,7 +142,7 @@ function attemptPlacement(
     const lastViolations: ValidationError[] = [];
     const preferredCandidates: CaseInstance[] = [];
     const fallbackCandidates: CaseInstance[] = [];
-    const preferredYaws = preferredYawsBySku.get(pc.skuId);
+    const preferredOrientations = preferredOrientationsBySku.get(pc.skuId);
 
     // Filter obviously out-of-bounds anchors early
     const floorExtremeAnchors = buildFloorExtremeAnchors(placed, truck);
@@ -144,28 +152,38 @@ function attemptPlacement(
       a.z < truck.innerDims.z
     );
 
-    // Try each anchor × each allowed yaw
+    // Try each anchor × each allowed yaw × each allowed tilt
     for (const anchor of candidateAnchors) {
       for (const yaw of sku.allowedYaw) {
-        const instance = createInstance(
-          `${pc.skuId}-${placed.length}`,
-          sku,
-          anchor,
-          yaw
-        );
-
-        const validation = validatePlacement(instance, ctx);
-
-        if (validation.valid) {
-          const compacted = compactPlacementVariants(instance, sku, ctx, truck);
-          if (preferredYaws && preferredYaws.has(yaw)) {
-            preferredCandidates.push(...compacted);
-          } else {
-            fallbackCandidates.push(...compacted);
+        for (const tiltY of getAllowedTilts(sku)) {
+          let instance = createInstance(
+            `${pc.skuId}-${placed.length}`,
+            sku,
+            anchor,
+            yaw
+          );
+          if (tiltY === 90) {
+            instance = {
+              ...instance,
+              tilt: { y: 90 },
+              aabb: computeOrientedAABB(sku, anchor, yaw, { y: 90 }),
+            };
           }
-        } else {
-          for (const v of validation.violations) {
-            lastViolations.push(v);
+
+          const validation = validatePlacement(instance, ctx);
+
+          if (validation.valid) {
+            const compacted = compactPlacementVariants(instance, sku, ctx, truck);
+            const orientation = orientationKey(yaw, tiltY);
+            if (preferredOrientations && preferredOrientations.has(orientation)) {
+              preferredCandidates.push(...compacted);
+            } else {
+              fallbackCandidates.push(...compacted);
+            }
+          } else {
+            for (const v of validation.violations) {
+              lastViolations.push(v);
+            }
           }
         }
       }
@@ -175,22 +193,13 @@ function attemptPlacement(
 
     if (candidatePool.length > 0) {
       const deduped = deduplicateInstances(candidatePool);
-      const minZ = deduped.reduce(
-        (lowest, candidate) => Math.min(lowest, candidate.position.z),
-        Number.POSITIVE_INFINITY
-      );
-      const FLOOR_PRIORITY_TOLERANCE_MM = 5;
-      const zPriority = deduped.filter(
-        candidate => candidate.position.z <= minZ + FLOOR_PRIORITY_TOLERANCE_MM
-      );
-
       const currentMaxX = getCurrentMaxX(placed);
       const X_PRIORITY_TOLERANCE_MM = 5;
-      const minProjectedMaxX = zPriority.reduce(
+      const minProjectedMaxX = deduped.reduce(
         (best, candidate) => Math.min(best, Math.max(currentMaxX, candidate.aabb.max.x)),
         Number.POSITIVE_INFINITY
       );
-      const xPriority = zPriority.filter(
+      const xPriority = deduped.filter(
         candidate => Math.max(currentMaxX, candidate.aabb.max.x) <= minProjectedMaxX + X_PRIORITY_TOLERANCE_MM
       );
 
@@ -211,7 +220,28 @@ function attemptPlacement(
         return candidateVoid <= minVoid + FLOOR_VOID_TOLERANCE;
       });
 
-      for (const candidate of compactnessPriority) {
+      const minZ = compactnessPriority.reduce(
+        (lowest, candidate) => Math.min(lowest, candidate.position.z),
+        Number.POSITIVE_INFINITY
+      );
+      const Z_PRIORITY_TOLERANCE_MM = 5;
+      const zPriority = compactnessPriority.filter(
+        candidate => candidate.position.z <= minZ + Z_PRIORITY_TOLERANCE_MM
+      );
+
+      let finalPriority = zPriority;
+      if (zPriority.some(candidate => candidate.position.z > SUPPORT_EPS_MM)) {
+        const minY = zPriority.reduce(
+          (lowest, candidate) => Math.min(lowest, candidate.position.y),
+          Number.POSITIVE_INFINITY
+        );
+        const Y_PRIORITY_TOLERANCE_MM = 5;
+        finalPriority = zPriority.filter(
+          candidate => candidate.position.y <= minY + Y_PRIORITY_TOLERANCE_MM
+        );
+      }
+
+      for (const candidate of finalPriority) {
         const score = scorePlacement(candidate, placed, truck);
         if (!bestPlacement || score > bestPlacement.score) {
           bestPlacement = { instance: candidate, score };
@@ -338,31 +368,33 @@ function sameTier(a: PlacementCase, b: PlacementCase): boolean {
   );
 }
 
-function buildPreferredYawMap(
+function buildPreferredOrientationMap(
   truck: TruckType,
   skus: CaseSKU[],
   quantities: Map<string, number>
-): Map<string, Set<Yaw>> {
-  const preferred = new Map<string, Set<Yaw>>();
+): Map<string, Set<string>> {
+  const preferred = new Map<string, Set<string>>();
 
   for (const sku of skus) {
     const qty = quantities.get(sku.skuId) ?? 0;
-    if (qty <= 0 || sku.allowedYaw.length <= 1) continue;
+    if (qty <= 0) continue;
 
-    const orientations = new Map<string, { xSpan: number; ySpan: number; yaws: Yaw[] }>();
+    const orientations = new Map<string, { xSpan: number; ySpan: number; keys: string[] }>();
 
     for (const yaw of sku.allowedYaw) {
-      const { xSpan, ySpan } = getFootprintForYaw(sku, yaw);
-      const key = `${xSpan}|${ySpan}`;
-      const existing = orientations.get(key);
-      if (existing) {
-        existing.yaws.push(yaw);
-      } else {
-        orientations.set(key, { xSpan, ySpan, yaws: [yaw] });
+      for (const tiltY of getAllowedTilts(sku)) {
+        const { xSpan, ySpan } = getFootprintForOrientation(sku, yaw, tiltY);
+        const key = `${xSpan}|${ySpan}`;
+        const existing = orientations.get(key);
+        const oKey = orientationKey(yaw, tiltY);
+        if (existing) {
+          existing.keys.push(oKey);
+        } else {
+          orientations.set(key, { xSpan, ySpan, keys: [oKey] });
+        }
       }
     }
-
-    let best: { score: number; columns: number; yaws: Yaw[] } | null = null;
+    let best: { score: number; columns: number; keys: string[] } | null = null;
     for (const option of orientations.values()) {
       const columns = Math.floor(truck.innerDims.y / option.ySpan);
       if (columns <= 0) continue;
@@ -373,23 +405,41 @@ function buildPreferredYawMap(
       const score = requiredLength + widthSlack * 0.5;
 
       if (!best || score < best.score || (score === best.score && columns > best.columns)) {
-        best = { score, columns, yaws: option.yaws };
+        best = { score, columns, keys: option.keys };
       }
     }
 
     if (best) {
-      preferred.set(sku.skuId, new Set(best.yaws));
+      preferred.set(sku.skuId, new Set(best.keys));
     }
   }
 
   return preferred;
 }
 
-function getFootprintForYaw(sku: CaseSKU, yaw: Yaw): { xSpan: number; ySpan: number } {
-  if (yaw === 0 || yaw === 180) {
-    return { xSpan: sku.dims.l, ySpan: sku.dims.w };
-  }
-  return { xSpan: sku.dims.w, ySpan: sku.dims.l };
+function getAllowedTilts(sku: CaseSKU): Array<0 | 90> {
+  const rules = parseStackClass(sku.stackClass);
+  if (rules.tiltRequired) return [90];
+  if (sku.tiltAllowed && !sku.uprightOnly) return [0, 90];
+  return [0];
+}
+
+function orientationKey(yaw: Yaw, tiltY: 0 | 90): string {
+  return `${yaw}|${tiltY}`;
+}
+
+function getFootprintForOrientation(
+  sku: CaseSKU,
+  yaw: Yaw,
+  tiltY: 0 | 90
+): { xSpan: number; ySpan: number } {
+  const oriented = computeOrientedAABB(
+    sku,
+    { x: 0, y: 0, z: 0 },
+    yaw,
+    { y: tiltY }
+  );
+  return { xSpan: oriented.max.x - oriented.min.x, ySpan: oriented.max.y - oriented.min.y };
 }
 
 // ============================================================================
@@ -526,7 +576,7 @@ function moveInstance(instance: CaseInstance, sku: CaseSKU, position: Vec3): Cas
 function deduplicateInstances(instances: CaseInstance[]): CaseInstance[] {
   const seen = new Set<string>();
   return instances.filter(inst => {
-    const key = `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw}`;
+    const key = `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw},${inst.tilt?.y ?? 0}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -744,6 +794,47 @@ function pruneAnchors(anchors: Vec3[], justPlaced: CaseInstance): Vec3[] {
 
 /** Distance (mm) within which two surfaces are considered "touching". */
 const TOUCH_DIST = 2;
+const SUPPORT_EPS_MM = 5;
+
+function computeStackSupportStats(
+  candidate: CaseInstance,
+  placed: CaseInstance[]
+): { supportRatio: number; edgeAligned: boolean } {
+  const candidateBottom = candidate.aabb.min.z;
+  if (candidateBottom <= SUPPORT_EPS_MM) {
+    return { supportRatio: 1, edgeAligned: true };
+  }
+
+  const candidateArea = bottomArea(candidate.aabb);
+  if (candidateArea <= 0) {
+    return { supportRatio: 0, edgeAligned: false };
+  }
+
+  let supportedArea = 0;
+  let edgeAligned = false;
+  for (const other of placed) {
+    if (!isApproximately(topZ(other.aabb), candidateBottom, SUPPORT_EPS_MM)) continue;
+
+    const overlap = intersectionAreaXZ(candidate.aabb, other.aabb);
+    if (overlap <= 0) continue;
+    supportedArea += overlap;
+
+    const xAligned =
+      Math.abs(candidate.aabb.min.x - other.aabb.min.x) <= TOUCH_DIST ||
+      Math.abs(candidate.aabb.max.x - other.aabb.max.x) <= TOUCH_DIST;
+    const yAligned =
+      Math.abs(candidate.aabb.min.y - other.aabb.min.y) <= TOUCH_DIST ||
+      Math.abs(candidate.aabb.max.y - other.aabb.max.y) <= TOUCH_DIST;
+    if (xAligned && yAligned) {
+      edgeAligned = true;
+    }
+  }
+
+  return {
+    supportRatio: Math.min(1, supportedArea / candidateArea),
+    edgeAligned,
+  };
+}
 
 function scorePlacement(
   instance: CaseInstance,
@@ -777,6 +868,13 @@ function scorePlacement(
   const xGrowthPenalty = placed.length === 0
     ? nextMaxX / truck.innerDims.x
     : (nextMaxX - currentMaxX) / truck.innerDims.x;
+
+  const supportStats = computeStackSupportStats(instance, placed);
+  const supportPenalty = Math.max(0, 1 - supportStats.supportRatio);
+  const supportAlignmentBonus = supportStats.edgeAligned ? 1 : 0;
+  const stackedLateralPenalty = instance.position.z > SUPPORT_EPS_MM
+    ? a.min.y / truck.innerDims.y
+    : 0;
 
   // Reward tight compaction: count faces touching walls or other placed boxes.
   let touchCount = 0;
@@ -822,6 +920,9 @@ function scorePlacement(
     - xForwardBias * 3.0           // strong front-to-back fill
     - yDeviationPenalty * 0.5      // weak L/R centering (adjacency handles wall-hugging)
     - xGrowthPenalty * 2.5         // avoid opening new rear rows too early
+    - supportPenalty * 6.0         // discourage partial-overlap stacks
+    - stackedLateralPenalty * 2.0  // fill upper-layer bays in order before edge-hugging
+    + supportAlignmentBonus * 1.5  // prefer clean column alignment when stacking
     + adjacencyBonus * 5.0         // dominant tight-packing reward
   );
 }
@@ -877,15 +978,15 @@ function getCurrentMaxX(instances: CaseInstance[]): number {
 }
 
 function instancePositionKey(inst: CaseInstance): string {
-  return `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw}`;
+  return `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw},${inst.tilt?.y ?? 0}`;
 }
 
 function projectedFloorVoidRatio(placed: CaseInstance[], candidate: CaseInstance): number {
   const FLOOR_Z_EPS = 5;
-  if (candidate.position.z > FLOOR_Z_EPS) return 0;
-
   const floorItems = placed.filter(inst => inst.position.z <= FLOOR_Z_EPS);
-  const all = [...floorItems, candidate];
+  const all = candidate.position.z <= FLOOR_Z_EPS
+    ? [...floorItems, candidate]
+    : [...floorItems];
   if (all.length <= 1) return 0;
 
   let minX = Number.POSITIVE_INFINITY;

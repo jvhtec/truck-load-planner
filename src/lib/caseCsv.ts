@@ -1,5 +1,5 @@
 import type { CaseSKU } from '../core/types';
-import { FLOOR_ONLY_TOKEN } from './tokens';
+import { composeStackClass, parseStackClass } from './stackRules';
 
 export const CASE_IO_HEADERS = [
   'BoxName',
@@ -141,7 +141,7 @@ export function formatCaseCsv(cases: CaseSKU[], quantities: Record<string, numbe
     const noRotate = c.allowedYaw.length <= 1;
     const noTilt = !c.tiltAllowed;
     const noStack = !c.canBeBase || !c.topContactAllowed || c.maxLoadAboveKg <= 0;
-    const onFloor = (c.stackClass ?? '').toUpperCase().split(/\s*[,;|]\s*/).includes(FLOOR_ONLY_TOKEN);
+    const onFloor = parseStackClass(c.stackClass).floorOnly;
 
     const row = [
       c.name,
@@ -164,17 +164,11 @@ export function formatCaseCsv(cases: CaseSKU[], quantities: Record<string, numbe
 }
 
 export function buildStackClass(base: string | undefined, onFloor: boolean): string | undefined {
-  const parts = (base ?? '').split(/\s*[,;|]\s*/).filter(Boolean);
-  const normalized = new Set(parts.map((v) => v.toUpperCase()));
-
-  if (onFloor) {
-    normalized.add(FLOOR_ONLY_TOKEN);
-  } else {
-    normalized.delete(FLOOR_ONLY_TOKEN);
-  }
-
-  if (normalized.size === 0) return undefined;
-  return [...normalized].join(',');
+  const parsed = parseStackClass(base);
+  return composeStackClass({
+    ...parsed,
+    floorOnly: onFloor,
+  });
 }
 
 export function sanitizeSkuId(name: string, existing: Set<string>): string {

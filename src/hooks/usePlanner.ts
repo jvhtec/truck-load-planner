@@ -19,6 +19,7 @@ import {
 import { SupportGraph } from '../core/support';
 import { SpatialIndex } from '../core/spatial';
 import { supabase } from '../lib/supabase';
+import { parseStackClass } from '../lib/stackRules';
 
 interface DbTruck {
   id: string;
@@ -174,7 +175,7 @@ interface CreateCaseInput {
   topContactAllowed: boolean;
   maxLoadAboveKg: number;
   minSupportRatio: number;
-  stackClass?: string;
+  stackClass?: string | null;
   color?: string;
   tiltAllowed?: boolean;
   isContainer?: boolean;
@@ -187,6 +188,29 @@ function normalizeTilt(input?: { x?: number; y?: number } | null): { y: 0 | 90 }
   const y = input?.y === 90 ? 90 : 0;
   if (y === 90) return { y: 90 };
   return { y: 0 };
+}
+
+function normalizeStackClassInput(input: string | null | undefined): string | null {
+  if (input === null || input === undefined) return null;
+  const trimmed = input.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getAllowedTiltsForSku(sku: CaseSKU): Array<0 | 90> {
+  const stackRules = parseStackClass(sku.stackClass);
+  if (stackRules.tiltRequired) return [90];
+  if (sku.tiltAllowed && !sku.uprightOnly) return [0, 90];
+  return [0];
+}
+
+function buildAutoPlaceOrientations(sku: CaseSKU): Array<{ yaw: Yaw; tilt: { y: 0 | 90 } }> {
+  const orientations: Array<{ yaw: Yaw; tilt: { y: 0 | 90 } }> = [];
+  for (const yaw of sku.allowedYaw) {
+    for (const tiltY of getAllowedTiltsForSku(sku)) {
+      orientations.push({ yaw, tilt: tiltY === 90 ? { y: 90 } : { y: 0 } });
+    }
+  }
+  return orientations;
 }
 
 function buildScanValues(maxCoord: number): number[] {
@@ -462,8 +486,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       const stagedX = stagedCol * (sku.dims.l + 150);
       const stagedY = -((stagedRow + 1) * (sku.dims.w + 250));
       const stagedPosition = { x: stagedX, y: stagedY, z: 0 };
+      const stackRules = parseStackClass(sku.stackClass);
+      const initialTilt = stackRules.tiltRequired ? { y: 90 as const } : { y: 0 as const };
       const candidate = createInstance(`${skuId}-${Date.now()}`, sku, stagedPosition, yaw);
-      const staged = { ...candidate, staged: true, tilt: { y: 0 } as const, aabb: computeOrientedAABB(sku, stagedPosition, yaw, { y: 0 }) };
+      const staged = { ...candidate, staged: true, tilt: initialTilt, aabb: computeOrientedAABB(sku, stagedPosition, yaw, initialTilt) };
       const newInstances = [...prev.instances, staged];
       result = { valid: true, violations: [] };
       return {
@@ -579,36 +605,70 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         }
 
         let placedCandidate: CaseInstance | null = null;
-        const zLevels = Array.from(new Set([0, ...placedNow.map(i => i.aabb.max.z)])).sort((a, b) => a - b);
+        let bestProjectedMaxX = Number.POSITIVE_INFINITY;
+        let bestZ = Number.POSITIVE_INFINITY;
+        let bestY = Number.POSITIVE_INFINITY;
+        let bestX = Number.POSITIVE_INFINITY;
 
-        for (const z of zLevels) {
-          if (placedCandidate) break;
-          const maxX = Math.max(0, truck.innerDims.x - (staged.aabb.max.x - staged.aabb.min.x));
-          const maxY = Math.max(0, truck.innerDims.y - (staged.aabb.max.y - staged.aabb.min.y));
+        const currentMaxX = placedNow.reduce((maxX, inst) => Math.max(maxX, inst.aabb.max.x), 0);
+        const zLevels = Array.from(new Set([0, ...placedNow.map(i => i.aabb.max.z)])).sort((a, b) => a - b);
+        const orientations = buildAutoPlaceOrientations(sku);
+        const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedNow, prev.skus);
+        const isValid = (candidate: CaseInstance) => validatePlacement(candidate, {
+          truck,
+          skus: prev.skus,
+          instances: placedNow,
+          supportGraph,
+          skuWeights,
+          spatialIndex,
+        }).valid;
+
+        for (const orientation of orientations) {
+          const sampleAabb = computeOrientedAABB(sku, { x: 0, y: 0, z: 0 }, orientation.yaw, orientation.tilt);
+          const xSpan = sampleAabb.max.x - sampleAabb.min.x;
+          const ySpan = sampleAabb.max.y - sampleAabb.min.y;
+          const maxX = Math.max(0, truck.innerDims.x - xSpan);
+          const maxY = Math.max(0, truck.innerDims.y - ySpan);
           const xValues = buildScanValues(maxX);
           const yValues = buildScanValues(maxY);
-          const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedNow, prev.skus);
-          const isValid = (candidate: CaseInstance) => validatePlacement(candidate, {
-            truck,
-            skus: prev.skus,
-            instances: placedNow,
-            supportGraph,
-            skuWeights,
-            spatialIndex,
-          }).valid;
 
-          for (const x of xValues) {
-            if (placedCandidate) break;
-            for (const y of yValues) {
-              const candidate: CaseInstance = {
-                ...staged,
-                position: { x, y, z },
-                aabb: computeOrientedAABB(sku, { x, y, z }, staged.yaw, normalizeTilt(staged.tilt)),
-                staged: false,
-              };
-              if (isValid(candidate)) {
-                placedCandidate = compactAutoPlacedCandidate(candidate, sku, isValid);
-                break;
+          for (const z of zLevels) {
+            for (const x of xValues) {
+              for (const y of yValues) {
+                const candidate: CaseInstance = {
+                  ...staged,
+                  position: { x, y, z },
+                  yaw: orientation.yaw,
+                  tilt: orientation.tilt,
+                  aabb: computeOrientedAABB(sku, { x, y, z }, orientation.yaw, orientation.tilt),
+                  staged: false,
+                };
+                if (isValid(candidate)) {
+                  const compacted = compactAutoPlacedCandidate(candidate, sku, isValid);
+                  const projectedMaxX = Math.max(currentMaxX, compacted.aabb.max.x);
+
+                  const X_TOL = 5;
+                  const Z_TOL = 5;
+                  const XY_TOL = 5;
+                  const better =
+                    projectedMaxX < bestProjectedMaxX - X_TOL ||
+                    (Math.abs(projectedMaxX - bestProjectedMaxX) <= X_TOL && compacted.position.z < bestZ - Z_TOL) ||
+                    (Math.abs(projectedMaxX - bestProjectedMaxX) <= X_TOL &&
+                      Math.abs(compacted.position.z - bestZ) <= Z_TOL &&
+                      compacted.position.y < bestY - XY_TOL) ||
+                    (Math.abs(projectedMaxX - bestProjectedMaxX) <= X_TOL &&
+                      Math.abs(compacted.position.z - bestZ) <= Z_TOL &&
+                      Math.abs(compacted.position.y - bestY) <= XY_TOL &&
+                      compacted.position.x < bestX - XY_TOL);
+
+                  if (better) {
+                    placedCandidate = compacted;
+                    bestProjectedMaxX = projectedMaxX;
+                    bestZ = compacted.position.z;
+                    bestY = compacted.position.y;
+                    bestX = compacted.position.x;
+                  }
+                }
               }
             }
           }
@@ -728,7 +788,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       if (!prev.truck) return prev;
       const skus = Array.from(prev.skus.values());
       const result = autoPack(prev.truck, skus, skuQuantities);
-      const placed = result.placed.map(inst => ({ ...inst, tilt: { y: 0 } as const }));
+      const placed = result.placed.map(inst => ({ ...inst, tilt: normalizeTilt(inst.tilt) }));
       const staged = prev.instances.filter(i => i.staged);
 
       return {

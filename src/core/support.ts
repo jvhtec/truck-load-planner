@@ -6,6 +6,7 @@ import type { CaseInstance } from './types';
 import { bottomZ, topZ, intersectionAreaXZ, bottomArea, isApproximately } from './geometry';
 
 const SUPPORT_EPSILON = 5; // 5mm tolerance for support detection
+const MIN_SUPPORT_CONTACT_RATIO = 0.01; // ignore tiny edge slivers
 
 // ============================================================================
 // Support Graph
@@ -39,6 +40,7 @@ export class SupportGraph {
 
     // Find supporters directly below this instance
     const instBottomZ = bottomZ(instance.aabb);
+    const minContactArea = bottomArea(instance.aabb) * MIN_SUPPORT_CONTACT_RATIO;
 
     if (instBottomZ > SUPPORT_EPSILON) {
       for (const other of allInstances) {
@@ -50,7 +52,7 @@ export class SupportGraph {
         if (isApproximately(otherTopZ, instBottomZ, SUPPORT_EPSILON)) {
           // Check X-Y footprint overlap
           const overlapArea = intersectionAreaXZ(instance.aabb, other.aabb);
-          if (overlapArea > 0) {
+          if (overlapArea >= minContactArea) {
             this.supporters.get(instance.id)!.add(other.id);
           }
         }
@@ -100,6 +102,7 @@ export class SupportGraph {
 
     const instBottomArea = bottomArea(instance.aabb);
     if (instBottomArea === 0) return 0;
+    const minContactArea = instBottomArea * MIN_SUPPORT_CONTACT_RATIO;
 
     let supportedArea = 0;
 
@@ -109,7 +112,10 @@ export class SupportGraph {
       const otherTopZ = topZ(other.aabb);
 
       if (isApproximately(otherTopZ, instBottomZ, SUPPORT_EPSILON)) {
-        supportedArea += intersectionAreaXZ(instance.aabb, other.aabb);
+        const overlapArea = intersectionAreaXZ(instance.aabb, other.aabb);
+        if (overlapArea >= minContactArea) {
+          supportedArea += overlapArea;
+        }
       }
     }
 

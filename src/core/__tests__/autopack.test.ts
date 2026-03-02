@@ -75,6 +75,19 @@ const tallChariotCase: CaseSKU = {
   minSupportRatio: 0.75,
 };
 
+const karaCase: CaseSKU = {
+  skuId: 'KARA',
+  name: '3x KARA',
+  dims: { l: 843, w: 602, h: 995 },
+  weightKg: 95,
+  uprightOnly: false,
+  allowedYaw: [0, 90, 180, 270],
+  canBeBase: true,
+  topContactAllowed: true,
+  maxLoadAboveKg: 100,
+  minSupportRatio: 0.75,
+};
+
 describe('autoPack', () => {
   it('returns empty result for zero quantities', () => {
     const result = autoPack(truck, [stdCase], new Map([['STD', 0]]));
@@ -108,13 +121,22 @@ describe('autoPack', () => {
     }
   });
 
-  it('keeps placements on floor while floor space exists for the SKU', () => {
-    const qty = 8;
+  it('keeps placements on floor while the current row still has room', () => {
+    const qty = 4;
     const result = autoPack(truck, [stdCase], new Map([['STD', qty]]), { maxAttempts: 1 });
 
     expect(result.placed).toHaveLength(qty);
     const elevated = result.placed.filter(inst => inst.position.z > 0);
     expect(elevated).toHaveLength(0);
+  });
+
+  it('keeps placements on floor when a single row still has room', () => {
+    const qty = 4;
+    const result = autoPack(wideTrailerTruck, [stdCase], new Map([['STD', qty]]), { maxAttempts: 1 });
+
+    expect(result.placed).toHaveLength(qty);
+    const maxExtentX = result.placed.reduce((maxX, inst) => Math.max(maxX, inst.aabb.max.x), 0);
+    expect(maxExtentX).toBeLessThanOrEqual(6200);
   });
 
   it('all placed instances are within truck bounds', () => {
@@ -215,6 +237,24 @@ describe('autoPack', () => {
     // 16 items with 1450mm depth and 4 columns should use ~5800mm length.
     // Allow slack for tie-breaks and tolerance, but block the previous >8m channel layout.
     expect(maxExtentX).toBeLessThanOrEqual(6200);
+  });
+
+  it('uses stacking when it materially reduces required truck length', () => {
+    const qty = 7;
+    const result = autoPack(
+      wideTrailerTruck,
+      [karaCase],
+      new Map([[karaCase.skuId, qty]]),
+      { maxAttempts: 5, randomSeed: 9 }
+    );
+
+    expect(result.placed).toHaveLength(qty);
+    expect(result.unplaced).toHaveLength(0);
+    expect(result.placed.some(inst => inst.position.z > 0)).toBe(true);
+
+    const maxExtentX = result.placed.reduce((maxX, inst) => Math.max(maxX, inst.aabb.max.x), 0);
+    // Stacked compact solution should remain near one row depth (843mm) plus minor tolerance.
+    expect(maxExtentX).toBeLessThanOrEqual(900);
   });
 
   it('stress: packs 20 standard cases', () => {
