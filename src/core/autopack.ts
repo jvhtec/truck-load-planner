@@ -10,11 +10,11 @@ import type {
   AutoPackResult,
   ValidationError,
 } from './types';
-import { createInstance, topZ } from './geometry';
+import { createInstance, computeOrientedAABB, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
-import { computeMetrics, computeAxleLoads, computeCOM } from './weight';
+import { computeMetrics } from './weight';
 
 // ============================================================================
 // Auto-Pack Configuration
@@ -113,6 +113,10 @@ function attemptPlacement(
   // Candidate anchor points — start from front-left-floor corner
   let anchors: Vec3[] = [{ x: 0, y: 0, z: 0 }];
 
+  // Inject wall-edge anchors at the start and periodically to ensure
+  // the algorithm explores positions against all truck boundaries.
+  anchors = addWallAnchors(anchors, truck);
+
   // Shuffle cases within same priority tier for multi-start diversity
   const shuffled = shuffleWithinTiers(casesToPlace, attemptNumber);
 
@@ -146,9 +150,12 @@ function attemptPlacement(
         const validation = validatePlacement(instance, ctx);
 
         if (validation.valid) {
-          const score = scorePlacement(instance, placed, truck, skuWeights);
-          if (!bestPlacement || score > bestPlacement.score) {
-            bestPlacement = { instance, score };
+          const compacted = compactPlacementVariants(instance, sku, ctx, truck);
+          for (const candidate of compacted) {
+            const score = scorePlacement(candidate, placed, truck, skuWeights);
+            if (!bestPlacement || score > bestPlacement.score) {
+              bestPlacement = { instance: candidate, score };
+            }
           }
         } else {
           for (const v of validation.violations) {
@@ -165,7 +172,13 @@ function attemptPlacement(
       spatialIndex.add(bestPlacement.instance.id, bestPlacement.instance.aabb);
 
       // Expand anchor set with positions adjacent to this placement
-      anchors = updateAnchors(anchors, bestPlacement.instance, sku);
+      anchors = updateAnchors(anchors, bestPlacement.instance, sku, placed, truck);
+      // Remove anchors that now fall strictly inside the placed box
+      anchors = pruneAnchors(anchors, bestPlacement.instance);
+      // Periodically re-inject wall anchors to reduce gaps as we fill the truck
+      if (placed.length % 3 === 0) {
+        anchors = addWallAnchors(anchors, truck);
+      }
     } else {
       unplaced.push(pc.skuId);
       // Tally the most common rejection reason for this case
@@ -277,31 +290,254 @@ function sameTier(a: PlacementCase, b: PlacementCase): boolean {
 
 interface Vec3 { x: number; y: number; z: number }
 
+const COMPACTION_STEPS = [500, 100, 20, 5, 1];
+
+/**
+ * Locally compact a valid candidate by sliding it toward blocking surfaces.
+ * This fills "missed" recesses even when no anchor exists at the exact tight position.
+ */
+function compactPlacementVariants(
+  instance: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  truck: TruckType
+): CaseInstance[] {
+  // First settle vertically, then front-to-back for tighter longitudinal packing.
+  const settled = minimizeAlongAxis(instance, sku, ctx, 'z');
+  const pushedFront = minimizeAlongAxis(settled, sku, ctx, 'x');
+
+  // Explore both lateral directions and keep both variants for scoring.
+  const leftPacked = minimizeAlongAxis(pushedFront, sku, ctx, 'y');
+  const rightPacked = maximizeAlongAxis(pushedFront, sku, ctx, truck, 'y');
+
+  return deduplicateInstances([
+    pushedFront,
+    leftPacked,
+    rightPacked,
+  ]);
+}
+
+function minimizeAlongAxis(
+  initial: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  axis: 'x' | 'y' | 'z'
+): CaseInstance {
+  let current = initial;
+  for (const step of COMPACTION_STEPS) {
+    let moved = true;
+    while (moved) {
+      const nextPos = { ...current.position, [axis]: current.position[axis] - step };
+      if (nextPos[axis] < 0) {
+        moved = false;
+        continue;
+      }
+
+      const next = moveInstance(current, sku, nextPos);
+      const validation = validatePlacement(next, ctx);
+      if (validation.valid) {
+        current = next;
+      } else {
+        moved = false;
+      }
+    }
+  }
+  return current;
+}
+
+function maximizeAlongAxis(
+  initial: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  truck: TruckType,
+  axis: 'x' | 'y' | 'z'
+): CaseInstance {
+  let current = initial;
+  for (const step of COMPACTION_STEPS) {
+    let moved = true;
+    while (moved) {
+      const extent = current.aabb.max[axis] - current.aabb.min[axis];
+      const maxOrigin = truck.innerDims[axis] - extent;
+      const target = current.position[axis] + step;
+      const nextCoord = Math.min(target, maxOrigin);
+      if (nextCoord <= current.position[axis]) {
+        moved = false;
+        continue;
+      }
+
+      const nextPos = { ...current.position, [axis]: nextCoord };
+      const next = moveInstance(current, sku, nextPos);
+      const validation = validatePlacement(next, ctx);
+      if (validation.valid) {
+        current = next;
+      } else {
+        moved = false;
+      }
+    }
+  }
+  return current;
+}
+
+function moveInstance(instance: CaseInstance, sku: CaseSKU, position: Vec3): CaseInstance {
+  return {
+    ...instance,
+    position,
+    aabb: computeOrientedAABB(sku, position, instance.yaw, instance.tilt),
+  };
+}
+
+function deduplicateInstances(instances: CaseInstance[]): CaseInstance[] {
+  const seen = new Set<string>();
+  return instances.filter(inst => {
+    const key = `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Add anchor points at truck walls to reduce gaps at boundaries. */
+function addWallAnchors(current: Vec3[], truck: TruckType): Vec3[] {
+  const newAnchors: Vec3[] = [...current];
+  const inner = truck.innerDims;
+
+  // Front wall (x = 0) - already covered by initial anchor
+  // Left wall (y = 0) - already covered by initial anchor
+  // Floor (z = 0) - already covered by initial anchor
+
+  // Right wall anchors (reduce horizontal gaps between cases and right wall)
+  newAnchors.push({ x: 0, y: inner.y, z: 0 });        // front-right-floor
+  newAnchors.push({ x: inner.x, y: 0, z: 0 });        // rear-left-floor
+  newAnchors.push({ x: inner.x, y: inner.y, z: 0 });  // rear-right-floor
+
+  // Rear wall anchors (reduce gaps at back of truck)
+  newAnchors.push({ x: inner.x, y: 0, z: 0 });
+  newAnchors.push({ x: inner.x, y: inner.y, z: 0 });
+
+  // Ceiling anchors (reduce vertical gaps at top of truck)
+  newAnchors.push({ x: 0, y: 0, z: inner.z });
+  newAnchors.push({ x: 0, y: inner.y, z: inner.z });
+  newAnchors.push({ x: inner.x, y: 0, z: inner.z });
+  newAnchors.push({ x: inner.x, y: inner.y, z: inner.z });
+
+  return deduplicateAnchors(newAnchors);
+}
+
 function updateAnchors(
   current: Vec3[],
   placed: CaseInstance,
-  sku: CaseSKU
+  sku: CaseSKU,
+  allPlaced: CaseInstance[],
+  truck: TruckType
 ): Vec3[] {
   const newAnchors: Vec3[] = [...current];
+  const inner = truck.innerDims;
 
+  const minX = placed.position.x;
+  const minY = placed.position.y;
+  const minZ = placed.position.z;
   const maxX = placed.aabb.max.x;
   const maxY = placed.aabb.max.y;
   const topZVal = topZ(placed.aabb);
 
   // Adjacent to right side (same row, next column)
-  newAnchors.push({ x: placed.position.x, y: maxY, z: placed.position.z });
+  newAnchors.push({ x: minX, y: maxY, z: minZ });
 
   // Adjacent behind (next row along length)
-  newAnchors.push({ x: maxX, y: placed.position.y, z: placed.position.z });
+  newAnchors.push({ x: maxX, y: minY, z: minZ });
 
   // Corner diagonal (next row + next column)
-  newAnchors.push({ x: maxX, y: maxY, z: placed.position.z });
+  newAnchors.push({ x: maxX, y: maxY, z: minZ });
 
   // On top (if this case can be used as a base)
   if (sku.canBeBase) {
-    newAnchors.push({ x: placed.position.x, y: placed.position.y, z: topZVal });
-    newAnchors.push({ x: placed.position.x, y: maxY, z: topZVal });
-    newAnchors.push({ x: maxX, y: placed.position.y, z: topZVal });
+    newAnchors.push({ x: minX, y: minY, z: topZVal });
+    newAnchors.push({ x: minX, y: maxY, z: topZVal });
+    newAnchors.push({ x: maxX, y: minY, z: topZVal });
+    // Diagonal stacking corner (previously missing)
+    newAnchors.push({ x: maxX, y: maxY, z: topZVal });
+  }
+
+  // Vertical gap reduction: anchor at ceiling when there's vertical headroom
+  if (topZVal < inner.z - 50) {
+    newAnchors.push({ x: minX, y: minY, z: inner.z });
+    newAnchors.push({ x: maxX, y: minY, z: inner.z });
+    if (sku.canBeBase) {
+      newAnchors.push({ x: minX, y: maxY, z: inner.z });
+      newAnchors.push({ x: maxX, y: maxY, z: inner.z });
+    }
+  }
+
+  // Horizontal gap reduction: anchor at right wall when there's Y headroom
+  if (maxY < inner.y - 50) {
+    newAnchors.push({ x: minX, y: inner.y, z: minZ });
+    newAnchors.push({ x: maxX, y: inner.y, z: minZ });
+    if (sku.canBeBase) {
+      newAnchors.push({ x: minX, y: inner.y, z: topZVal });
+      newAnchors.push({ x: maxX, y: inner.y, z: topZVal });
+    }
+  }
+
+  // Back-of-truck gap reduction: anchor at rear wall when there's X headroom
+  if (maxX < inner.x - 50) {
+    newAnchors.push({ x: inner.x, y: minY, z: minZ });
+    newAnchors.push({ x: inner.x, y: maxY, z: minZ });
+    if (sku.canBeBase) {
+      newAnchors.push({ x: inner.x, y: minY, z: topZVal });
+      newAnchors.push({ x: inner.x, y: maxY, z: topZVal });
+    }
+  }
+
+  // Extreme-point cross-projections: combine this box's new edges with the
+  // edges of recently placed boxes.  This generates anchors inside concave
+  // spaces that the simple adjacent-only method cannot reach.
+  // Example: two boxes in a row with different lengths leave a recess that
+  // only a (maxX_other, maxY_new, z) anchor can address.
+  const CROSS_WINDOW = 20; // only look at the most recent boxes to stay O(1) average
+  const recentStart = Math.max(0, allPlaced.length - CROSS_WINDOW);
+  for (let i = recentStart; i < allPlaced.length; i++) {
+    const other = allPlaced[i];
+    if (other.id === placed.id) continue;
+    const oMaxX = other.aabb.max.x;
+    const oMaxY = other.aabb.max.y;
+    // Project placed box's X-edge against other box's Y-edge (floor level)
+    newAnchors.push({ x: maxX, y: oMaxY, z: minZ });
+    // Project other box's X-edge against placed box's Y-edge (floor level)
+    newAnchors.push({ x: oMaxX, y: maxY, z: minZ });
+
+    // Cross-projections at stacking level — fills recesses on upper layers
+    if (sku.canBeBase) {
+      newAnchors.push({ x: maxX, y: oMaxY, z: topZVal });
+      newAnchors.push({ x: oMaxX, y: maxY, z: topZVal });
+    }
+    const oTopZ = topZ(other.aabb);
+    if (oTopZ > 0) {
+      newAnchors.push({ x: maxX, y: oMaxY, z: oTopZ });
+      newAnchors.push({ x: oMaxX, y: maxY, z: oTopZ });
+    }
+
+    // Wall-edge projections: fill gaps by projecting edges back to walls
+    newAnchors.push({ x: oMaxX, y: 0, z: minZ });
+    newAnchors.push({ x: maxX, y: 0, z: minZ });
+  }
+
+  // Multi-layer vertical anchors: add intermediate Z levels to reduce vertical gaps.
+  // When there's significant vertical space, generate anchors at intermediate heights.
+  if (sku.canBeBase && topZVal > 0 && topZVal < inner.z - 100) {
+    // Add anchors at 25%, 50%, and 75% of remaining vertical space
+    const remaining = inner.z - topZVal;
+    if (remaining > 300) {
+      const layer1 = topZVal + Math.floor(remaining * 0.25);
+      const layer2 = topZVal + Math.floor(remaining * 0.5);
+      newAnchors.push({ x: minX, y: minY, z: layer1 });
+      newAnchors.push({ x: maxX, y: minY, z: layer1 });
+      newAnchors.push({ x: minX, y: maxY, z: layer1 });
+      newAnchors.push({ x: maxX, y: maxY, z: layer1 });
+      newAnchors.push({ x: minX, y: minY, z: layer2 });
+      newAnchors.push({ x: maxX, y: minY, z: layer2 });
+      newAnchors.push({ x: minX, y: maxY, z: layer2 });
+      newAnchors.push({ x: maxX, y: maxY, z: layer2 });
+    }
   }
 
   return deduplicateAnchors(newAnchors);
@@ -317,50 +553,91 @@ function deduplicateAnchors(anchors: Vec3[]): Vec3[] {
   });
 }
 
+/** Remove anchors that fall strictly inside a placed box (they will always collide). */
+function pruneAnchors(anchors: Vec3[], justPlaced: CaseInstance): Vec3[] {
+  const { min, max } = justPlaced.aabb;
+  return anchors.filter(a =>
+    !(a.x > min.x && a.x < max.x &&
+      a.y > min.y && a.y < max.y &&
+      a.z > min.z && a.z < max.z)
+  );
+}
+
 // ============================================================================
 // Placement Scoring
 // ============================================================================
+
+/** Distance (mm) within which two surfaces are considered "touching". */
+const TOUCH_DIST = 2;
 
 function scorePlacement(
   instance: CaseInstance,
   placed: CaseInstance[],
   truck: TruckType,
-  skuWeights: Map<string, number>
+  _skuWeights: Map<string, number>
 ): number {
+  const a = instance.aabb;
+
   // Prefer lower height (pack from floor up)
-  const heightPenalty = instance.aabb.min.z / truck.innerDims.z;
+  const heightPenalty = a.min.z / truck.innerDims.z;
 
-  // Prefer placing toward front axle (front-heavy is usually better for smaller trucks)
-  const xCenter = (instance.aabb.min.x + instance.aabb.max.x) / 2;
-  const axleMidX = (truck.axle.frontX + truck.axle.rearX) / 2;
-  const axleProximity = Math.abs(xCenter - axleMidX) / truck.innerDims.x;
+  // Pack front-to-back: reward placing closer to the front of the truck.
+  // The old axle-proximity metric pulled items toward the truck center,
+  // which split cargo into two groups with a gap in between.  Axle limits
+  // are already enforced by validation, so let the scoring just drive
+  // compact front-to-back filling.
+  const xForwardBias = (a.min.x + a.max.x) / 2 / truck.innerDims.x;
 
-  // Prefer placing toward Y center (minimize L/R imbalance)
-  const yCenter = (instance.aabb.min.y + instance.aabb.max.y) / 2;
+  // Weak Y-center preference — just enough to break ties in favour of
+  // balanced loads, but not strong enough to override wall-adjacency.
+  const yCenter = (a.min.y + a.max.y) / 2;
   const truckMidY = truck.innerDims.y / 2;
   const yDeviationPenalty = Math.abs(yCenter - truckMidY) / truck.innerDims.y;
 
-  // Prefer tight compaction: reward when box touches existing boxes
-  let adjacencyBonus = 0;
-  if (placed.length > 0) {
-    const allWithCandidate = [...placed, instance];
-    const totalW = allWithCandidate.reduce((s, i) => s + (skuWeights.get(i.skuId) || 0), 0);
-    if (totalW > 0) {
-      const com = computeCOM(allWithCandidate, skuWeights);
-      const { frontKg, rearKg } = computeAxleLoads(totalW, com.x, truck);
-      const axleRatio = truck.axle.maxFrontKg + truck.axle.maxRearKg > 0
-        ? Math.abs(frontKg / truck.axle.maxFrontKg - rearKg / truck.axle.maxRearKg)
-        : 0;
-      adjacencyBonus = -axleRatio; // negative because lower is better
+  // Reward tight compaction: count faces touching walls or other placed boxes.
+  let touchCount = 0;
+
+  // Wall / floor adjacency
+  if (a.min.z <= TOUCH_DIST) touchCount += 2; // floor is the most important surface
+  if (a.min.x <= TOUCH_DIST) touchCount += 1; // front wall
+  if (a.min.y <= TOUCH_DIST) touchCount += 1; // left wall
+  if (a.max.y >= truck.innerDims.y - TOUCH_DIST) touchCount += 1; // right wall
+  if (a.max.x >= truck.innerDims.x - TOUCH_DIST) touchCount += 1; // rear wall
+  if (a.max.z >= truck.innerDims.z - TOUCH_DIST) touchCount += 1; // ceiling
+
+  // Box-to-box face adjacency (X, Y, and Z axes)
+  for (const p of placed) {
+    const b = p.aabb;
+    const yOverlap = a.min.y < b.max.y - TOUCH_DIST && a.max.y > b.min.y + TOUCH_DIST;
+    const xOverlap = a.min.x < b.max.x - TOUCH_DIST && a.max.x > b.min.x + TOUCH_DIST;
+    const zOverlap = a.min.z < b.max.z - TOUCH_DIST && a.max.z > b.min.z + TOUCH_DIST;
+
+    // X-axis faces (front/rear)
+    if (zOverlap && yOverlap) {
+      if (Math.abs(a.min.x - b.max.x) <= TOUCH_DIST) touchCount++;
+      if (Math.abs(a.max.x - b.min.x) <= TOUCH_DIST) touchCount++;
+    }
+    // Y-axis faces (left/right)
+    if (zOverlap && xOverlap) {
+      if (Math.abs(a.min.y - b.max.y) <= TOUCH_DIST) touchCount++;
+      if (Math.abs(a.max.y - b.min.y) <= TOUCH_DIST) touchCount++;
+    }
+    // Z-axis faces (top/bottom stacking contact)
+    if (xOverlap && yOverlap) {
+      if (Math.abs(a.min.z - b.max.z) <= TOUCH_DIST) touchCount++;
+      if (Math.abs(a.max.z - b.min.z) <= TOUCH_DIST) touchCount++;
     }
   }
+
+  // Normalise to [0, 1]: max realistic touches ≈ floor(2) + front(1) + left(1) + right(1) + rear(1) + ceiling(1) + 4 box faces = 11
+  const adjacencyBonus = Math.min(touchCount, 11) / 11;
 
   // Combined score (higher = better placement)
   return (
     -heightPenalty * 2.0
-    - axleProximity * 1.0
-    - yDeviationPenalty * 1.5
-    + adjacencyBonus * 2.0
+    - xForwardBias * 3.0           // strong front-to-back fill
+    - yDeviationPenalty * 0.5      // weak L/R centering (adjacency handles wall-hugging)
+    + adjacencyBonus * 5.0         // dominant tight-packing reward
   );
 }
 
@@ -385,6 +662,16 @@ function scoreResult(
 
   // Penalize L/R imbalance
   score -= result.metrics.lrImbalancePercent * weights.lrBalance;
+
+  // Reward compactness: prefer solutions where cargo uses less truck length.
+  // Lower max-X extent → tighter, more consolidated pack.
+  if (result.placed.length > 0) {
+    let maxExtentX = 0;
+    for (const inst of result.placed) {
+      if (inst.aabb.max.x > maxExtentX) maxExtentX = inst.aabb.max.x;
+    }
+    score -= (maxExtentX / truck.innerDims.x) * 150;
+  }
 
   // Reward compactness (fewer unplaced = better, already captured in placed count)
   score -= result.unplaced.length * 500;
