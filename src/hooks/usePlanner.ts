@@ -7,6 +7,11 @@ import type {
   ValidationResult,
   ValidationError,
   Yaw,
+  TractorTrailer,
+  RigidVehicle,
+  AxleGroup,
+  TrailerMetrics,
+  VehicleConfig,
 } from '../core/types';
 import {
   createInstance,
@@ -64,6 +69,85 @@ interface DbLoadPlan {
   total_weight_kg: number;
   status: string;
   created_at: string;
+}
+
+// ── v3: tractor-trailer DB types ──────────────────────────────────────────
+
+interface DbRigidVehicle {
+  id: string;
+  vehicle_id: string;
+  name: string;
+  inner_length_mm: number;
+  inner_width_mm: number;
+  inner_height_mm: number;
+  empty_weight_kg: number;
+  empty_com_x_mm: number;
+  max_lr_imbalance_percent: number;
+  obstacles: any;
+}
+
+interface DbAxleGroup {
+  id: string;
+  vehicle_id: string;
+  axle_id: string;
+  x_mm: number;
+  max_kg: number;
+  min_kg: number | null;
+  sort_order: number;
+}
+
+interface DbTractorTrailerRig {
+  id: string;
+  rig_id: string;
+  name: string;
+  tractor_id: string;
+  trailer_id: string;
+  kingpin_x_on_trailer_mm: number;
+  kingpin_x_on_tractor_mm: number;
+  max_kingpin_kg: number | null;
+}
+
+function dbToRigidVehicle(db: DbRigidVehicle, axleGroups: DbAxleGroup[]): RigidVehicle {
+  return {
+    vehicleId: db.vehicle_id,
+    name: db.name,
+    innerDimsMm: {
+      x: db.inner_length_mm,
+      y: db.inner_width_mm,
+      z: db.inner_height_mm,
+    },
+    emptyWeightKg: db.empty_weight_kg,
+    emptyComXmm: db.empty_com_x_mm,
+    axleGroups: axleGroups
+      .filter(ag => ag.vehicle_id === db.id)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((ag): AxleGroup => ({
+        id: ag.axle_id,
+        xMm: ag.x_mm,
+        maxKg: ag.max_kg,
+        minKg: ag.min_kg ?? undefined,
+      })),
+    balance: { maxLeftRightPercentDiff: db.max_lr_imbalance_percent },
+    obstacles: db.obstacles ?? [],
+  };
+}
+
+function dbToTractorTrailer(
+  rig: DbTractorTrailerRig,
+  tractor: RigidVehicle,
+  trailer: RigidVehicle,
+): TractorTrailer {
+  return {
+    id: rig.rig_id,
+    name: rig.name,
+    tractor,
+    trailer,
+    coupling: {
+      kingpinX_onTrailerMm: rig.kingpin_x_on_trailer_mm,
+      kingpinX_onTractorMm: rig.kingpin_x_on_tractor_mm,
+      maxKingpinKg: rig.max_kingpin_kg ?? undefined,
+    },
+  };
 }
 
 function dbToTruck(db: DbTruck): TruckType {
@@ -135,11 +219,14 @@ export interface SavedPlan {
 
 export interface PlannerState {
   trucks: TruckType[];
+  rigs: TractorTrailer[];          // v3: tractor-trailer rigs
   cases: CaseSKU[];
   truck: TruckType | null;
+  activeRig: TractorTrailer | null; // v3: active tractor-trailer rig
   skus: Map<string, CaseSKU>;
   instances: CaseInstance[];
   metrics: LoadMetrics | null;
+  trailerMetrics: TrailerMetrics | null; // v3: per-axle metrics for active rig
   selectedInstanceId: string | null;
   validation: ValidationResult | null;
   loading: boolean;
@@ -190,6 +277,7 @@ function normalizeTilt(input?: { x?: number; y?: number } | null): { y: 0 | 90 }
 
 export interface PlannerActions {
   setTruck: (truck: TruckType) => void;
+  setRig: (rig: TractorTrailer) => void; // v3: activate a tractor-trailer rig
   placeCase: (skuId: string, _position: { x: number; y: number; z: number }, yaw: Yaw) => ValidationResult;
   autoPlaceInstances: (instanceIds: string[]) => ValidationResult;
   removeCase: (instanceId: string) => void;
@@ -325,11 +413,14 @@ function findMagneticSnapCandidate(
 export function usePlanner(): [PlannerState, PlannerActions] {
   const [state, setState] = useState<PlannerState>(() => ({
     trucks: [],
+    rigs: [],
     cases: [],
     truck: null,
+    activeRig: null,
     skus: new Map(),
     instances: [],
     metrics: null,
+    trailerMetrics: null,
     selectedInstanceId: null,
     validation: null,
     loading: true,
@@ -339,19 +430,43 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   useEffect(() => {
     async function loadData() {
       try {
-        const [trucksRes, casesRes] = await Promise.all([
+        const [trucksRes, casesRes, rigidVehiclesRes, axleGroupsRes, rigsRes] = await Promise.all([
           supabase.from('trucks').select('*'),
           supabase.from('case_skus').select('*'),
+          supabase.from('rigid_vehicles').select('*'),
+          supabase.from('axle_groups').select('*'),
+          supabase.from('tractor_trailer_rigs').select('*'),
         ]);
 
         if (trucksRes.error) throw trucksRes.error;
         if (casesRes.error) throw casesRes.error;
+        // rigid_vehicles / axle_groups / tractor_trailer_rigs are optional:
+        // suppress only "table does not exist" (Postgres code 42P01); surface all other errors.
+        const isMissingTable = (err: { code?: string; message?: string }) =>
+          err.code === '42P01' || (err.message ?? '').includes('does not exist');
+        if (rigidVehiclesRes.error && !isMissingTable(rigidVehiclesRes.error)) throw rigidVehiclesRes.error;
+        if (axleGroupsRes.error && !isMissingTable(axleGroupsRes.error)) throw axleGroupsRes.error;
+        if (rigsRes.error && !isMissingTable(rigsRes.error)) throw rigsRes.error;
 
         const trucks = (trucksRes.data as DbTruck[]).map(dbToTruck);
         const cases = (casesRes.data as DbCaseSku[]).map(dbToCaseSku);
         const skus = new Map(cases.map(c => [c.skuId, c]));
 
-        setState(prev => ({ ...prev, trucks, cases, skus, loading: false }));
+        // Build v3 tractor-trailer rigs (if migration has been applied)
+        const rigidVehiclesData = (rigidVehiclesRes.data ?? []) as DbRigidVehicle[];
+        const axleGroupsData = (axleGroupsRes.data ?? []) as DbAxleGroup[];
+        const rigsData = (rigsRes.data ?? []) as DbTractorTrailerRig[];
+
+        const vehicleMap = new Map<string, RigidVehicle>();
+        for (const dbV of rigidVehiclesData) {
+          vehicleMap.set(dbV.id, dbToRigidVehicle(dbV, axleGroupsData));
+        }
+
+        const rigs: TractorTrailer[] = rigsData
+          .filter(rig => vehicleMap.has(rig.tractor_id) && vehicleMap.has(rig.trailer_id))
+          .map(rig => dbToTractorTrailer(rig, vehicleMap.get(rig.tractor_id)!, vehicleMap.get(rig.trailer_id)!));
+
+        setState(prev => ({ ...prev, trucks, rigs, cases, skus, loading: false }));
       } catch (error: any) {
         setState(prev => ({ ...prev, loading: false, error: error.message || 'Failed to load data' }));
       }
@@ -371,12 +486,26 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     setState(prev => ({
       ...prev,
       truck,
+      activeRig: null,
       instances: [],
       metrics: updateMetrics([], truck, prev.skus),
+      trailerMetrics: null,
       validation: null,
       selectedInstanceId: null,
     }));
   }, [updateMetrics]);
+
+  const setRig = useCallback((rig: TractorTrailer) => {
+    setState(prev => ({
+      ...prev,
+      activeRig: rig,
+      instances: [],
+      metrics: null,
+      trailerMetrics: null,
+      validation: null,
+      selectedInstanceId: null,
+    }));
+  }, []);
 
   const placeCase = useCallback((skuId: string, _position: { x: number; y: number; z: number }, yaw: Yaw): ValidationResult => {
     let result: ValidationResult = { valid: false, violations: [] };
@@ -658,9 +787,16 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
   const runAutoPack = useCallback((skuQuantities: Map<string, number>) => {
     setState(prev => {
-      if (!prev.truck) return prev;
       const skus = Array.from(prev.skus.values());
-      const result = autoPack(prev.truck, skus, skuQuantities);
+      const vehicle: VehicleConfig | null = prev.activeRig
+        ? { kind: 'tractor-trailer', vehicle: prev.activeRig }
+        : prev.truck
+        ? { kind: 'rigid', vehicle: prev.truck }
+        : null;
+
+      if (!vehicle) return prev;
+
+      const result = autoPack(vehicle, skus, skuQuantities);
       const placed = result.placed.map(inst => ({ ...inst, tilt: { y: 0 } as const }));
       const staged = prev.instances.filter(i => i.staged);
 
@@ -668,6 +804,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         ...prev,
         instances: [...staged, ...placed],
         metrics: result.metrics,
+        trailerMetrics: result.trailerMetrics ?? null,
         validation: result.unplaced.length > 0
           ? {
               valid: false,
@@ -684,8 +821,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   const clearAll = useCallback(() => {
     setState(prev => ({
       ...prev,
+      activeRig: null,
       instances: [],
       metrics: prev.truck ? updateMetrics([], prev.truck, prev.skus) : null,
+      trailerMetrics: null,
       selectedInstanceId: null,
       validation: null,
     }));
@@ -785,8 +924,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       return {
         ...prev,
         truck,
+        activeRig: null,
         instances,
         metrics: updateMetrics(instances, truck, prev.skus),
+        trailerMetrics: null,
         validation: null,
         error: null,
       };
@@ -1021,6 +1162,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
   return [state, {
     setTruck,
+    setRig,
     placeCase,
     removeCase,
     updateInstance,

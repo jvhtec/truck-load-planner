@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { autoPack } from '../autopack';
 import { validatePlacement, type ValidatorContext } from '../validate';
 import { SupportGraph } from '../support';
-import type { CaseSKU, TruckType } from '../types';
+import type { CaseSKU, TruckType, TractorTrailer, RigidVehicle, VehicleConfig } from '../types';
 
 const truck: TruckType = {
   truckId: 'T1',
@@ -174,5 +174,150 @@ describe('autoPack', () => {
     // Case footprint = 1000×600 = 600,000 mm². 20 cases need 12,000,000 mm² → should all fit on one layer.
     expect(result.placed.length).toBe(20);
     expect(result.unplaced).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// PRD §10.3 — Tractor-trailer autopack tests
+// ============================================================================
+
+describe('autoPack — tractor-trailer (PRD §10.3)', () => {
+  // ── Shared fixture: 18T semi (6×4 tractor + 13.6m trailer) ──────────────
+  const trailerBody: RigidVehicle = {
+    vehicleId: 'semi-trailer-13600',
+    name: '13.6m Curtainsider Trailer',
+    innerDimsMm: { x: 13600, y: 2400, z: 2700 },
+    emptyWeightKg: 6500,
+    emptyComXmm: 6800,
+    axleGroups: [
+      { id: 'trailer', xMm: 12200, maxKg: 18000 },
+    ],
+    balance: { maxLeftRightPercentDiff: 10 },
+  };
+
+  const tractorBody: RigidVehicle = {
+    vehicleId: 'tractor-6x4-eu',
+    name: '6×4 Tractor Unit (EU)',
+    innerDimsMm: { x: 0, y: 0, z: 0 },
+    emptyWeightKg: 8000,
+    emptyComXmm: 2100,
+    axleGroups: [
+      { id: 'steer', xMm: 1400, maxKg: 7100, minKg: 1500 },
+      { id: 'drive', xMm: 3600, maxKg: 17500 },
+    ],
+    balance: { maxLeftRightPercentDiff: 10 },
+  };
+
+  const standardRig: TractorTrailer = {
+    id: '18t-semi-6x4-eu',
+    name: '18T Semi (6×4 tractor + 13.6m trailer)',
+    tractor: tractorBody,
+    trailer: trailerBody,
+    coupling: {
+      kingpinX_onTrailerMm: 1200,
+      kingpinX_onTractorMm: 3000,
+      maxKingpinKg: 12000,
+    },
+  };
+
+  const standardConfig: VehicleConfig = { kind: 'tractor-trailer', vehicle: standardRig };
+
+  it('packs cases within all axle limits and populates trailerMetrics (PRD §10.3.1)', () => {
+    // 5 light cases (5 × 20 kg = 100 kg) — well below all limits.
+    const result = autoPack(standardConfig, [stdCase], new Map([['STD', 5]]), {
+      maxAttempts: 3,
+    });
+
+    expect(result.placed.length).toBe(5);
+    expect(result.unplaced).toHaveLength(0);
+
+    // trailerMetrics must be populated for tractor-trailer configs
+    expect(result.trailerMetrics).toBeDefined();
+    const tm = result.trailerMetrics!;
+
+    // All trailer axle loads within their limits
+    for (const axle of tm.trailerAxleLoads) {
+      expect(axle.loadKg).toBeLessThanOrEqual(axle.maxKg);
+    }
+    // Kingpin within limit
+    if (tm.kingpinMaxKg !== undefined) {
+      expect(tm.kingpinKg).toBeLessThanOrEqual(tm.kingpinMaxKg);
+    }
+    // All tractor axle loads within their limits
+    for (const axle of tm.tractorAxleLoads) {
+      expect(axle.loadKg).toBeLessThanOrEqual(axle.maxKg);
+    }
+  });
+
+  it('returns partial result when axle limits prevent full packing (PRD §10.3.2)', () => {
+    // Purpose-built tight rig: kingpin and trailer axle each capped at 200 kg.
+    // The greedy front-to-back placement makes the load front-heavy (high R_k).
+    // By case ~11 the combined COM has moved just past the kingpin, pushing
+    // R_k over 200 kg at all available anchor positions. Cases ~11-20 are
+    // therefore rejected with KINGPIN_OVER and go to unplaced.
+    //
+    // Notes on the fixture:
+    //   emptyWeightKg: 0  → L/R balance denominator = trailerAxleMaxKg = 200 kg
+    //                        (avoids spurious LEFT_RIGHT_IMBALANCE_TRAILER from
+    //                         the emptyWeight >> trailerAxleMaxKg anomaly)
+    //   maxLeftRightPercentDiff: 100 → L/R balance effectively disabled
+    //   Tractor limits: very high → only kingpin / trailer axle constrain packing
+    const tightTrailer: RigidVehicle = {
+      vehicleId: 'tight-trailer',
+      name: 'Tight Trailer',
+      innerDimsMm: { x: 13600, y: 2400, z: 2700 },
+      emptyWeightKg: 0,
+      emptyComXmm: 6800,
+      axleGroups: [{ id: 'trailer', xMm: 12200, maxKg: 200 }],
+      balance: { maxLeftRightPercentDiff: 100 },
+    };
+    const simpleTractor: RigidVehicle = {
+      vehicleId: 'simple-tractor',
+      name: 'Simple Tractor',
+      innerDimsMm: { x: 0, y: 0, z: 0 },
+      emptyWeightKg: 8000,
+      emptyComXmm: 2100,
+      axleGroups: [
+        { id: 'steer', xMm: 1400, maxKg: 99999 },
+        { id: 'drive', xMm: 3600, maxKg: 99999 },
+      ],
+      balance: { maxLeftRightPercentDiff: 100 },
+    };
+    const tightRig: TractorTrailer = {
+      id: 'tight-rig',
+      name: 'Tight Rig',
+      tractor: simpleTractor,
+      trailer: tightTrailer,
+      coupling: {
+        kingpinX_onTrailerMm: 1200,
+        kingpinX_onTractorMm: 3000,
+        maxKingpinKg: 200,
+      },
+    };
+    const tightConfig: VehicleConfig = { kind: 'tractor-trailer', vehicle: tightRig };
+
+    const result = autoPack(tightConfig, [stdCase], new Map([['STD', 20]]), {
+      maxAttempts: 1,
+    });
+
+    expect(result.placed.length).toBeLessThan(20);
+    expect(result.unplaced.length).toBeGreaterThan(0);
+    const axleViolations =
+      (result.reasonSummary.KINGPIN_OVER ?? 0) +
+      (result.reasonSummary.AXLE_TRAILER_OVER ?? 0);
+    expect(axleViolations).toBeGreaterThan(0);
+  });
+
+  it('produces deterministic results with same seed and trailer config (PRD §10.3.3)', () => {
+    const cfg = { maxAttempts: 5, randomSeed: 99 };
+    const r1 = autoPack(standardConfig, [stdCase, fragCase], new Map([['STD', 6], ['FRAG', 3]]), cfg);
+    const r2 = autoPack(standardConfig, [stdCase, fragCase], new Map([['STD', 6], ['FRAG', 3]]), cfg);
+
+    const layout = (r: ReturnType<typeof autoPack>) =>
+      r.placed.map(p => ({ skuId: p.skuId, position: p.position, yaw: p.yaw }));
+
+    expect(layout(r1)).toEqual(layout(r2));
+    expect(r1.unplaced).toEqual(r2.unplaced);
+    expect(r1.reasonSummary).toEqual(r2.reasonSummary);
   });
 });
