@@ -10,7 +10,7 @@ import type {
   AutoPackResult,
   ValidationError,
 } from './types';
-import { createInstance, topZ } from './geometry';
+import { createInstance, computeOrientedAABB, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
@@ -150,9 +150,12 @@ function attemptPlacement(
         const validation = validatePlacement(instance, ctx);
 
         if (validation.valid) {
-          const score = scorePlacement(instance, placed, truck, skuWeights);
-          if (!bestPlacement || score > bestPlacement.score) {
-            bestPlacement = { instance, score };
+          const compacted = compactPlacementVariants(instance, sku, ctx, truck);
+          for (const candidate of compacted) {
+            const score = scorePlacement(candidate, placed, truck, skuWeights);
+            if (!bestPlacement || score > bestPlacement.score) {
+              bestPlacement = { instance: candidate, score };
+            }
           }
         } else {
           for (const v of validation.violations) {
@@ -286,6 +289,112 @@ function sameTier(a: PlacementCase, b: PlacementCase): boolean {
 // ============================================================================
 
 interface Vec3 { x: number; y: number; z: number }
+
+const COMPACTION_STEPS = [500, 100, 20, 5, 1];
+
+/**
+ * Locally compact a valid candidate by sliding it toward blocking surfaces.
+ * This fills "missed" recesses even when no anchor exists at the exact tight position.
+ */
+function compactPlacementVariants(
+  instance: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  truck: TruckType
+): CaseInstance[] {
+  // First settle vertically, then front-to-back for tighter longitudinal packing.
+  const settled = minimizeAlongAxis(instance, sku, ctx, 'z');
+  const pushedFront = minimizeAlongAxis(settled, sku, ctx, 'x');
+
+  // Explore both lateral directions and keep both variants for scoring.
+  const leftPacked = minimizeAlongAxis(pushedFront, sku, ctx, 'y');
+  const rightPacked = maximizeAlongAxis(pushedFront, sku, ctx, truck, 'y');
+
+  return deduplicateInstances([
+    pushedFront,
+    leftPacked,
+    rightPacked,
+  ]);
+}
+
+function minimizeAlongAxis(
+  initial: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  axis: 'x' | 'y' | 'z'
+): CaseInstance {
+  let current = initial;
+  for (const step of COMPACTION_STEPS) {
+    let moved = true;
+    while (moved) {
+      const nextPos = { ...current.position, [axis]: current.position[axis] - step };
+      if (nextPos[axis] < 0) {
+        moved = false;
+        continue;
+      }
+
+      const next = moveInstance(current, sku, nextPos);
+      const validation = validatePlacement(next, ctx);
+      if (validation.valid) {
+        current = next;
+      } else {
+        moved = false;
+      }
+    }
+  }
+  return current;
+}
+
+function maximizeAlongAxis(
+  initial: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  truck: TruckType,
+  axis: 'x' | 'y' | 'z'
+): CaseInstance {
+  let current = initial;
+  for (const step of COMPACTION_STEPS) {
+    let moved = true;
+    while (moved) {
+      const extent = current.aabb.max[axis] - current.aabb.min[axis];
+      const maxOrigin = truck.innerDims[axis] - extent;
+      const target = current.position[axis] + step;
+      const nextCoord = Math.min(target, maxOrigin);
+      if (nextCoord <= current.position[axis]) {
+        moved = false;
+        continue;
+      }
+
+      const nextPos = { ...current.position, [axis]: nextCoord };
+      const next = moveInstance(current, sku, nextPos);
+      const validation = validatePlacement(next, ctx);
+      if (validation.valid) {
+        current = next;
+      } else {
+        moved = false;
+      }
+    }
+  }
+  return current;
+}
+
+function moveInstance(instance: CaseInstance, sku: CaseSKU, position: Vec3): CaseInstance {
+  return {
+    ...instance,
+    position,
+    aabb: computeOrientedAABB(sku, position, instance.yaw, instance.tilt),
+  };
+}
+
+function deduplicateInstances(instances: CaseInstance[]): CaseInstance[] {
+  const seen = new Set<string>();
+  return instances.filter(inst => {
+    const key = `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 /** Add anchor points at truck walls to reduce gaps at boundaries. */
 function addWallAnchors(current: Vec3[], truck: TruckType): Vec3[] {
