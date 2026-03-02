@@ -7,7 +7,7 @@ import { CaseCatalog } from './components/CaseCatalog';
 import { MetricsPanel } from './components/MetricsPanel';
 import { usePlanner } from './hooks/usePlanner';
 import type { SavedPlan } from './hooks/usePlanner';
-import type { CaseInstance, ValidationError, ValidationResult, Yaw } from './core/types';
+import type { CaseInstance, TruckType, ValidationError, ValidationResult, Yaw } from './core/types';
 import { computeOrientedAABB } from './core/geometry';
 import { SpatialIndex } from './core/spatial';
 import { SupportGraph } from './core/support';
@@ -18,6 +18,123 @@ import { buildStackClass, formatCaseCsv, parseCaseCsv, sanitizeSkuId } from './l
 import { composeStackClass, parseStackClass } from './lib/stackRules';
 
 const ORDER_BUCKET_MM = 100;
+const STACK_GLUE_Z_TOL_MM = 6;
+const STACK_GLUE_MIN_OVERLAP_MM2 = 1;
+
+function stackPairKey(aId: string, bId: string): string {
+  return aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
+}
+
+function overlapAreaXY(a: CaseInstance, b: CaseInstance): number {
+  const ox = Math.max(0, Math.min(a.aabb.max.x, b.aabb.max.x) - Math.max(a.aabb.min.x, b.aabb.min.x));
+  const oy = Math.max(0, Math.min(a.aabb.max.y, b.aabb.max.y) - Math.max(a.aabb.min.y, b.aabb.min.y));
+  return ox * oy;
+}
+
+function buildStackTouchPairs(instances: CaseInstance[]): Set<string> {
+  const pairs = new Set<string>();
+  for (let i = 0; i < instances.length; i += 1) {
+    const a = instances[i];
+    for (let j = i + 1; j < instances.length; j += 1) {
+      const b = instances[j];
+      const overlap = overlapAreaXY(a, b);
+      if (overlap <= STACK_GLUE_MIN_OVERLAP_MM2) continue;
+      const aOnB = Math.abs(a.aabb.min.z - b.aabb.max.z) <= STACK_GLUE_Z_TOL_MM;
+      const bOnA = Math.abs(b.aabb.min.z - a.aabb.max.z) <= STACK_GLUE_Z_TOL_MM;
+      if (!aOnB && !bOnA) continue;
+      pairs.add(stackPairKey(a.id, b.id));
+    }
+  }
+  return pairs;
+}
+
+function buildStackAdjacency(instances: CaseInstance[], ungroupedPairKeys: Set<string>): Map<string, Set<string>> {
+  const adjacency = new Map<string, Set<string>>();
+  const connect = (aId: string, bId: string) => {
+    const aSet = adjacency.get(aId) ?? new Set<string>();
+    aSet.add(bId);
+    adjacency.set(aId, aSet);
+    const bSet = adjacency.get(bId) ?? new Set<string>();
+    bSet.add(aId);
+    adjacency.set(bId, bSet);
+  };
+
+  for (let i = 0; i < instances.length; i += 1) {
+    const a = instances[i];
+    for (let j = i + 1; j < instances.length; j += 1) {
+      const b = instances[j];
+      const key = stackPairKey(a.id, b.id);
+      if (ungroupedPairKeys.has(key)) continue;
+      const overlap = overlapAreaXY(a, b);
+      if (overlap <= STACK_GLUE_MIN_OVERLAP_MM2) continue;
+      const aOnB = Math.abs(a.aabb.min.z - b.aabb.max.z) <= STACK_GLUE_Z_TOL_MM;
+      const bOnA = Math.abs(b.aabb.min.z - a.aabb.max.z) <= STACK_GLUE_Z_TOL_MM;
+      if (!aOnB && !bOnA) continue;
+      connect(a.id, b.id);
+    }
+  }
+
+  return adjacency;
+}
+
+function collectConnectedStackIds(adjacency: Map<string, Set<string>>, startId: string): string[] {
+  const group: string[] = [];
+  const pending: string[] = [startId];
+  const seen = new Set<string>();
+
+  while (pending.length > 0) {
+    const id = pending.pop();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    group.push(id);
+    const neighbors = adjacency.get(id);
+    if (!neighbors) continue;
+    for (const neighbor of neighbors) {
+      if (!seen.has(neighbor)) pending.push(neighbor);
+    }
+  }
+
+  return group;
+}
+
+function clampGroupedAnchorPosition(
+  anchor: CaseInstance,
+  requested: { x: number; y: number; z: number },
+  groupMembers: CaseInstance[],
+  truck: TruckType
+): { x: number; y: number; z: number } {
+  let minDx = Number.NEGATIVE_INFINITY;
+  let maxDx = Number.POSITIVE_INFINITY;
+  let minDy = Number.NEGATIVE_INFINITY;
+  let maxDy = Number.POSITIVE_INFINITY;
+  let minDz = Number.NEGATIVE_INFINITY;
+  let maxDz = Number.POSITIVE_INFINITY;
+
+  for (const inst of groupMembers) {
+    const sizeX = inst.aabb.max.x - inst.aabb.min.x;
+    const sizeY = inst.aabb.max.y - inst.aabb.min.y;
+    const sizeZ = inst.aabb.max.z - inst.aabb.min.z;
+    minDx = Math.max(minDx, -inst.position.x);
+    maxDx = Math.min(maxDx, truck.innerDims.x - sizeX - inst.position.x);
+    minDy = Math.max(minDy, -inst.position.y);
+    maxDy = Math.min(maxDy, truck.innerDims.y - sizeY - inst.position.y);
+    minDz = Math.max(minDz, -inst.position.z);
+    maxDz = Math.min(maxDz, truck.innerDims.z - sizeZ - inst.position.z);
+  }
+
+  const desiredDx = Math.round(requested.x - anchor.position.x);
+  const desiredDy = Math.round(requested.y - anchor.position.y);
+  const desiredDz = Math.round(requested.z - anchor.position.z);
+  const clampedDx = Math.max(minDx, Math.min(desiredDx, maxDx));
+  const clampedDy = Math.max(minDy, Math.min(desiredDy, maxDy));
+  const clampedDz = Math.max(minDz, Math.min(desiredDz, maxDz));
+
+  return {
+    x: Math.round(anchor.position.x + clampedDx),
+    y: Math.round(anchor.position.y + clampedDy),
+    z: Math.round(anchor.position.z + clampedDz),
+  };
+}
 
 function centerX(inst: CaseInstance): number {
   return (inst.aabb.min.x + inst.aabb.max.x) / 2;
@@ -208,8 +325,9 @@ function App() {
   const [touchDropId, setTouchDropId] = useState<string | null>(null);
   const [viewLocked, setViewLocked] = useState(false);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('iso');
-  const [itemActionsMenu, setItemActionsMenu] = useState<{ id: string; x: number; y: number; tiltAllowed: boolean; tiltRequired: boolean } | null>(null);
+  const [itemActionsMenu, setItemActionsMenu] = useState<{ id: string; x: number; y: number; tiltAllowed: boolean; tiltRequired: boolean; canUngroup: boolean } | null>(null);
   const [selectedStagedIds, setSelectedStagedIds] = useState<string[]>([]);
+  const [ungroupedPairKeys, setUngroupedPairKeys] = useState<Set<string>>(() => new Set<string>());
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [printing, setPrinting] = useState(false);
   const [showCaseLabelsDialog, setShowCaseLabelsDialog] = useState(false);
@@ -284,6 +402,7 @@ function App() {
       hideSpatialMetrics: 'Ocultar Guias 3D',
       rotate90: 'Rotar 90°',
       toggleTiltY90: 'Alternar Inclinacion Y 90°',
+      ungroupStack: 'Desagrupar pila',
       cannotPlace: 'No se puede colocar',
       stagedItems: 'Items en Zona Externa (fuera del camion)',
       autoplaceSelected: 'Auto ubicar seleccionados',
@@ -410,6 +529,7 @@ function App() {
       hideSpatialMetrics: 'Hide 3D Guides',
       rotate90: 'Rotate 90°',
       toggleTiltY90: 'Toggle Tilt Y 90°',
+      ungroupStack: 'Ungroup stack',
       cannotPlace: 'Cannot Place',
       stagedItems: 'Staged Items (outside truck)',
       autoplaceSelected: 'Autoplace Selected',
@@ -517,6 +637,32 @@ function App() {
     setSelectedStagedIds(prev => prev.filter(id => staged.has(id)));
   }, [state.instances]);
 
+  useEffect(() => {
+    const placed = state.instances.filter(i => !i.staged);
+    if (placed.length === 0) {
+      setUngroupedPairKeys(prev => (prev.size === 0 ? prev : new Set<string>()));
+      return;
+    }
+
+    const touchingPairs = buildStackTouchPairs(placed);
+    setUngroupedPairKeys(prev => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      for (const key of prev) {
+        if (!touchingPairs.has(key)) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return prev;
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (touchingPairs.has(key)) next.add(key);
+      }
+      return next;
+    });
+  }, [state.instances]);
+
   // Auto-switch mobile tab when truck selection changes
   useEffect(() => {
     if (state.truck) {
@@ -599,6 +745,12 @@ function App() {
   const selectedTiltRequired = selectedStackRules?.tiltRequired === true;
   const stagedInstances = state.instances.filter(i => i.staged);
   const placedInstances = state.instances.filter(i => !i.staged);
+  const placedById = placedInstances.reduce((acc, inst) => {
+    acc.set(inst.id, inst);
+    return acc;
+  }, new Map<string, CaseInstance>());
+  const stackedAdjacency = buildStackAdjacency(placedInstances, ungroupedPairKeys);
+  const getStackGroupIds = (instanceId: string): string[] => collectConnectedStackIds(stackedAdjacency, instanceId);
   const caseInstanceCounts = state.instances.reduce((acc, inst) => {
     acc.set(inst.skuId, (acc.get(inst.skuId) ?? 0) + 1);
     return acc;
@@ -616,6 +768,16 @@ function App() {
     if (!state.truck) return requested;
     const moving = state.instances.find(i => i.id === instanceId);
     if (!moving) return requested;
+
+    const groupedIds = getStackGroupIds(instanceId).filter(id => placedById.has(id));
+    if (groupedIds.length > 1) {
+      const groupMembers = groupedIds
+        .map(id => placedById.get(id))
+        .filter((inst): inst is CaseInstance => Boolean(inst));
+      if (groupMembers.length > 1) {
+        return clampGroupedAnchorPosition(moving, requested, groupMembers, state.truck);
+      }
+    }
 
     const movingSku = state.skus.get(moving.skuId);
     if (!movingSku) return requested;
@@ -1236,6 +1398,25 @@ function App() {
                   {t.toggleTiltY90}
                 </button>
               )}
+              {itemActionsMenu.canUngroup && (
+                <button onClick={() => {
+                  const neighbors = stackedAdjacency.get(itemActionsMenu.id);
+                  if (!neighbors || neighbors.size === 0) {
+                    setItemActionsMenu(null);
+                    return;
+                  }
+                  setUngroupedPairKeys(prev => {
+                    const next = new Set(prev);
+                    for (const neighborId of neighbors) {
+                      next.add(stackPairKey(itemActionsMenu.id, neighborId));
+                    }
+                    return next;
+                  });
+                  setItemActionsMenu(null);
+                }}>
+                  {t.ungroupStack}
+                </button>
+              )}
             </div>
           )}
           <TruckView3D
@@ -1254,6 +1435,29 @@ function App() {
             onMoveInstance={(instanceId, position) => {
               const instance = state.instances.find(i => i.id === instanceId);
               if (!instance) return false;
+
+              const groupedIds = getStackGroupIds(instanceId).filter(id => placedById.has(id));
+              if (groupedIds.length > 1 && state.truck) {
+                const groupMembers = groupedIds
+                  .map(id => placedById.get(id))
+                  .filter((inst): inst is CaseInstance => Boolean(inst));
+                if (groupMembers.length > 1) {
+                  const clampedAnchor = clampGroupedAnchorPosition(instance, position, groupMembers, state.truck);
+                  const delta = {
+                    x: clampedAnchor.x - instance.position.x,
+                    y: clampedAnchor.y - instance.position.y,
+                    z: clampedAnchor.z - instance.position.z,
+                  };
+                  if (delta.x === 0 && delta.y === 0 && delta.z === 0) return true;
+                  const groupedResult = actions.moveInstancesByDelta(groupedIds, delta);
+                  if (!groupedResult.valid) {
+                    pushToast(buildMoveToastMessage(groupedResult, lang));
+                    console.warn('Grouped move failed:', groupedResult);
+                  }
+                  return groupedResult.valid;
+                }
+              }
+
               let result = actions.updateInstance(instanceId, { position });
               if (!result.valid && position.z > 0) {
                 const reason = buildMoveToastMessage(result, lang);
@@ -1275,12 +1479,14 @@ function App() {
               const instance = state.instances.find(i => i.id === id);
               const sku = instance ? state.skus.get(instance.skuId) : null;
               const stackRules = sku ? parseStackClass(sku.stackClass) : null;
+              const canUngroup = (stackedAdjacency.get(id)?.size ?? 0) > 0;
               setItemActionsMenu({
                 id,
                 x: Math.max(8, Math.min(clientX, window.innerWidth - 170)),
-                y: Math.max(8, Math.min(clientY, window.innerHeight - 100)),
+                y: Math.max(8, Math.min(clientY, window.innerHeight - 150)),
                 tiltAllowed: tiltAllowed || Boolean(stackRules?.tiltRequired),
                 tiltRequired: Boolean(stackRules?.tiltRequired),
+                canUngroup,
               });
             }}
           />

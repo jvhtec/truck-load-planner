@@ -280,6 +280,10 @@ export interface PlannerActions {
   placeCase: (skuId: string, _position: { x: number; y: number; z: number }, yaw: Yaw) => ValidationResult;
   autoPlaceInstances: (instanceIds: string[]) => ValidationResult;
   removeCase: (instanceId: string) => void;
+  moveInstancesByDelta: (
+    instanceIds: string[],
+    delta: { x: number; y: number; z: number }
+  ) => ValidationResult;
   updateInstance: (
     instanceId: string,
     updates: {
@@ -572,6 +576,82 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         ...prev,
         instances: newInstances,
         metrics: updateMetrics(newInstances, prev.truck, prev.skus),
+        validation: null,
+      };
+    });
+
+    return result;
+  }, [updateMetrics]);
+
+  const moveInstancesByDelta = useCallback((
+    instanceIds: string[],
+    delta: { x: number; y: number; z: number }
+  ): ValidationResult => {
+    let result: ValidationResult = { valid: false, violations: [] };
+
+    setState(prev => {
+      if (!prev.truck || instanceIds.length === 0) return prev;
+
+      const uniqueIds = Array.from(new Set(instanceIds));
+      const movingById = new Map<string, CaseInstance>();
+      for (const id of uniqueIds) {
+        const inst = prev.instances.find(i => i.id === id);
+        if (!inst) {
+          result = { valid: false, violations: ['INVALID_ORIENTATION'], details: { error: `Unknown instance: ${id}` } };
+          return prev;
+        }
+        if (inst.staged) {
+          result = { valid: false, violations: ['OUT_OF_BOUNDS'], details: { error: `Cannot group-move staged instance: ${id}` } };
+          return prev;
+        }
+        movingById.set(id, inst);
+      }
+
+      const proposedById = new Map<string, CaseInstance>();
+      for (const [id, current] of movingById.entries()) {
+        const sku = prev.skus.get(current.skuId);
+        if (!sku) {
+          result = { valid: false, violations: ['INVALID_ORIENTATION'], details: { error: `Unknown SKU for instance: ${id}` } };
+          return prev;
+        }
+        const nextPosition = {
+          x: Math.round(current.position.x + delta.x),
+          y: Math.round(current.position.y + delta.y),
+          z: Math.round(current.position.z + delta.z),
+        };
+        const tilt = normalizeTilt(current.tilt);
+        proposedById.set(id, {
+          ...current,
+          position: nextPosition,
+          tilt,
+          staged: false,
+          aabb: computeOrientedAABB(sku, nextPosition, current.yaw, tilt),
+        });
+      }
+
+      const proposedInstances = prev.instances.map(inst => proposedById.get(inst.id) ?? inst);
+      for (const [id, candidate] of proposedById.entries()) {
+        const placedWithoutCurrent = proposedInstances.filter(i => !i.staged && i.id !== id);
+        const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedWithoutCurrent, prev.skus);
+        const validation = validatePlacement(candidate, {
+          truck: prev.truck,
+          skus: prev.skus,
+          instances: placedWithoutCurrent,
+          supportGraph,
+          skuWeights,
+          spatialIndex,
+        });
+        if (!validation.valid) {
+          result = validation;
+          return { ...prev, validation };
+        }
+      }
+
+      result = { valid: true, violations: [] };
+      return {
+        ...prev,
+        instances: proposedInstances,
+        metrics: updateMetrics(proposedInstances, prev.truck, prev.skus),
         validation: null,
       };
     });
@@ -1169,6 +1249,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     setTruck,
     placeCase,
     removeCase,
+    moveInstancesByDelta,
     updateInstance,
     swapInstancePositions,
     autoPlaceInstances,
