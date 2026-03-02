@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { validatePlacement, ValidatorContext } from '../validate';
 import { SupportGraph } from '../support';
-import { createInstance } from '../geometry';
+import { computeOrientedAABB, createInstance } from '../geometry';
 import type { CaseSKU, TruckType } from '../types';
 
 // Truck with generous balance tolerance so single-case tests don't trip the L/R check
@@ -127,6 +127,70 @@ describe('validatePlacement – INVALID_ORIENTATION', () => {
     const inst = createInstance('i1', fragSku, { x: 0, y: CENTER_Y, z: 0 }, 90);
     const result = validatePlacement(inst, makeCtx());
     expect(result.violations).toContain('INVALID_ORIENTATION');
+  });
+
+  it('rejects upright placement when TILT_REQUIRED is configured', () => {
+    const tiltRequiredSku: CaseSKU = {
+      ...baseSku,
+      skuId: 'TILT_REQ',
+      tiltAllowed: true,
+      stackClass: 'TILT_REQUIRED',
+    };
+    const skus = new Map([['TILT_REQ', tiltRequiredSku]]);
+    const inst = createInstance('i-tr', tiltRequiredSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const result = validatePlacement(inst, makeCtx([], skus));
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContain('INVALID_ORIENTATION');
+  });
+
+  it('accepts tilted placement when TILT_REQUIRED is configured', () => {
+    const tiltRequiredSku: CaseSKU = {
+      ...baseSku,
+      skuId: 'TILT_REQ_OK',
+      tiltAllowed: true,
+      stackClass: 'TILT_REQUIRED',
+    };
+    const skus = new Map([['TILT_REQ_OK', tiltRequiredSku]]);
+    const inst = createInstance('i-tr-ok', tiltRequiredSku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const tilted = {
+      ...inst,
+      tilt: { y: 90 as const },
+      aabb: computeOrientedAABB(tiltRequiredSku, inst.position, inst.yaw, { y: 90 }),
+    };
+    const result = validatePlacement(tilted, makeCtx([], skus));
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it('rejects placement above MAX_LEVEL_N', () => {
+    const max2Sku: CaseSKU = {
+      ...baseSku,
+      skuId: 'MAX2',
+      stackClass: 'MAX_LEVEL_2',
+    };
+    const skus = new Map([['MAX2', max2Sku]]);
+
+    const base = createInstance('base-l2', max2Sku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const mid = createInstance('mid-l2', max2Sku, { x: 0, y: CENTER_Y, z: 400 }, 0);
+    const top = createInstance('top-l2', max2Sku, { x: 0, y: CENTER_Y, z: 800 }, 0);
+    const result = validatePlacement(top, makeCtx([base, mid], skus));
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContain('INVALID_ORIENTATION');
+  });
+
+  it('accepts placement within MAX_LEVEL_N', () => {
+    const max2Sku: CaseSKU = {
+      ...baseSku,
+      skuId: 'MAX2_OK',
+      stackClass: 'MAX_LEVEL_2',
+    };
+    const skus = new Map([['MAX2_OK', max2Sku]]);
+
+    const base = createInstance('base-l2-ok', max2Sku, { x: 0, y: CENTER_Y, z: 0 }, 0);
+    const mid = createInstance('mid-l2-ok', max2Sku, { x: 0, y: CENTER_Y, z: 400 }, 0);
+    const result = validatePlacement(mid, makeCtx([base], skus));
+    expect(result.valid).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 });
 

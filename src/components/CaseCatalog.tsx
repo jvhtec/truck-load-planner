@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { CaseSKU, Yaw } from '../core/types';
+import { composeStackClass, parseStackClass } from '../lib/stackRules';
 
 interface CaseCatalogProps {
   cases: CaseSKU[];
   instanceCounts: Map<string, number>;
   onPlace: (skuId: string, position: { x: number; y: number; z: number }, yaw: Yaw) => void;
-  onUpdateCase: (skuId: string, updates: Partial<CaseSKU>) => Promise<void>;
+  onUpdateCase: (skuId: string, updates: Omit<Partial<CaseSKU>, 'stackClass'> & { stackClass?: string | null }) => Promise<void>;
   onDeleteCase: (skuId: string) => Promise<void>;
   onNewCase?: () => void;
   lang: 'es' | 'en';
@@ -25,7 +26,10 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
   const [editTiltAllowed, setEditTiltAllowed] = useState(false);
   const [editMaxLoadAboveKg, setEditMaxLoadAboveKg] = useState(0);
   const [editMinSupportRatio, setEditMinSupportRatio] = useState(0.75);
-  const [editStackClass, setEditStackClass] = useState('');
+  const [editStackLabels, setEditStackLabels] = useState('');
+  const [editFloorOnly, setEditFloorOnly] = useState(false);
+  const [editTiltRequired, setEditTiltRequired] = useState(false);
+  const [editMaxStackLevel, setEditMaxStackLevel] = useState('');
   const [editIsContainer, setEditIsContainer] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -51,6 +55,11 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
         color: 'Color',
         weight: 'Peso (kg)',
         stackClass: 'Clase de Apilado',
+        stackClassHint: 'Etiquetas/grupos (separados por coma)',
+        loadingRules: 'Reglas de Carga',
+        onFloorOnly: 'Solo en Suelo',
+        alwaysTilted: 'Siempre Inclinado (Y 90°)',
+        maxStackLevel: 'Nivel Maximo de Apilado',
         maxLoad: 'Carga Maxima Encima (kg)',
         minSupport: 'Soporte Minimo (ratio)',
         allowedYaw: 'Yaw Permitido',
@@ -88,6 +97,11 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
         color: 'Color',
         weight: 'Weight (kg)',
         stackClass: 'Stack Class',
+        stackClassHint: 'Labels/groups (comma separated)',
+        loadingRules: 'Loading Rules',
+        onFloorOnly: 'On Floor Only',
+        alwaysTilted: 'Always Tilted (Y 90°)',
+        maxStackLevel: 'Max Stack Level',
         maxLoad: 'Max Load Above (kg)',
         minSupport: 'Min Support Ratio',
         allowedYaw: 'Allowed Yaw',
@@ -120,15 +134,26 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
       180: selectedCase.allowedYaw.includes(180),
       270: selectedCase.allowedYaw.includes(270),
     });
-    setEditUprightOnly(selectedCase.uprightOnly);
+    const stackRules = parseStackClass(selectedCase.stackClass);
+    setEditUprightOnly(stackRules.tiltRequired ? false : selectedCase.uprightOnly);
     setEditCanBeBase(selectedCase.canBeBase);
     setEditTopContactAllowed(selectedCase.topContactAllowed);
-    setEditTiltAllowed(Boolean(selectedCase.tiltAllowed));
+    setEditTiltAllowed(stackRules.tiltRequired ? true : Boolean(selectedCase.tiltAllowed));
     setEditMaxLoadAboveKg(selectedCase.maxLoadAboveKg);
     setEditMinSupportRatio(selectedCase.minSupportRatio);
-    setEditStackClass(selectedCase.stackClass ?? '');
+    setEditStackLabels(stackRules.labels.join(', '));
+    setEditFloorOnly(stackRules.floorOnly);
+    setEditTiltRequired(stackRules.tiltRequired);
+    setEditMaxStackLevel(stackRules.maxStackLevel !== undefined ? String(stackRules.maxStackLevel) : '');
     setEditIsContainer(selectedCase.isContainer === true);
   }, [selectedCase, editOpen]);
+
+  useEffect(() => {
+    if (!editOpen) return;
+    if (!editTiltRequired) return;
+    setEditUprightOnly(false);
+    setEditTiltAllowed(true);
+  }, [editOpen, editTiltRequired]);
 
   const getPreferredYaw = (sku: CaseSKU): Yaw => {
     if (sku.allowedYaw.includes(0)) return 0;
@@ -209,7 +234,34 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
             </div>
             <div className="position-inputs compact">
               <label>{t.weight}<input type="number" step="0.1" value={editWeightKg} onChange={(e) => setEditWeightKg(Number(e.target.value))} /></label>
-              <label>{t.stackClass}<input type="text" value={editStackClass} onChange={(e) => setEditStackClass(e.target.value)} /></label>
+              <label>
+                {t.stackClass}
+                <input type="text" value={editStackLabels} onChange={(e) => setEditStackLabels(e.target.value)} />
+                <small>{t.stackClassHint}</small>
+              </label>
+            </div>
+            <div className="loading-rules">
+              <label className="loading-rules-title">{t.loadingRules}</label>
+              <div className="position-inputs compact">
+                <label className="toggle-input">
+                  <input type="checkbox" checked={editFloorOnly} onChange={(e) => setEditFloorOnly(e.target.checked)} />
+                  <span>{t.onFloorOnly}</span>
+                </label>
+                <label className="toggle-input">
+                  <input type="checkbox" checked={editTiltRequired} onChange={(e) => setEditTiltRequired(e.target.checked)} />
+                  <span>{t.alwaysTilted}</span>
+                </label>
+                <label>
+                  {t.maxStackLevel}
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={editMaxStackLevel}
+                    onChange={(e) => setEditMaxStackLevel(e.target.value)}
+                  />
+                </label>
+              </div>
             </div>
             <div className="position-inputs compact">
               <label>{t.maxLoad}<input type="number" step="0.1" value={editMaxLoadAboveKg} onChange={(e) => setEditMaxLoadAboveKg(Number(e.target.value))} /></label>
@@ -231,7 +283,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
             </div>
             <div className="position-inputs compact">
               <label className="toggle-input">
-                <input type="checkbox" checked={editUprightOnly} onChange={(e) => setEditUprightOnly(e.target.checked)} />
+                <input type="checkbox" checked={editUprightOnly} disabled={editTiltRequired} onChange={(e) => setEditUprightOnly(e.target.checked)} />
                 <span>{t.uprightOnly}</span>
               </label>
               <label className="toggle-input">
@@ -246,7 +298,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                 <input
                   type="checkbox"
                   checked={editTiltAllowed}
-                  disabled={editUprightOnly}
+                  disabled={editUprightOnly || editTiltRequired}
                   onChange={(e) => setEditTiltAllowed(e.target.checked)}
                 />
                 <span>{t.tiltAllowed}</span>
@@ -267,19 +319,32 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                   if (nextAllowedYaw.length === 0) {
                     throw new Error(t.yawRequired);
                   }
+                  const rawMaxStackLevel = Number(editMaxStackLevel);
+                  const maxStackLevel = Number.isFinite(rawMaxStackLevel) && rawMaxStackLevel >= 1
+                    ? Math.floor(rawMaxStackLevel)
+                    : undefined;
+                  const labelParts = parseStackClass(editStackLabels).labels;
+                  const nextStackClass = composeStackClass({
+                    labels: labelParts,
+                    floorOnly: editFloorOnly,
+                    tiltRequired: editTiltRequired,
+                    maxStackLevel,
+                  });
+                  const nextUprightOnly = editTiltRequired ? false : editUprightOnly;
+                  const nextTiltAllowed = editTiltRequired ? true : (editUprightOnly ? false : editTiltAllowed);
                   await onUpdateCase(selectedCase.skuId, {
                     name: editName,
                     color: editColor,
                     dims: editDims,
                     weightKg: editWeightKg,
                     allowedYaw: nextAllowedYaw,
-                    uprightOnly: editUprightOnly,
+                    uprightOnly: nextUprightOnly,
                     canBeBase: editCanBeBase,
                     topContactAllowed: editTopContactAllowed,
-                    tiltAllowed: editUprightOnly ? false : editTiltAllowed,
+                    tiltAllowed: nextTiltAllowed,
                     maxLoadAboveKg: editMaxLoadAboveKg,
                     minSupportRatio: editMinSupportRatio,
-                    stackClass: editStackClass || undefined,
+                    stackClass: nextStackClass ?? null,
                     isContainer: editIsContainer,
                   });
                   setEditOpen(false);

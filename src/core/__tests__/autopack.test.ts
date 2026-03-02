@@ -88,6 +88,22 @@ const karaCase: CaseSKU = {
   minSupportRatio: 0.75,
 };
 
+const tiltRequiredCase: CaseSKU = {
+  ...stdCase,
+  skuId: 'TILT_REQ',
+  name: 'Tilt Required',
+  tiltAllowed: true,
+  stackClass: 'TILT_REQUIRED',
+};
+
+const maxLevelTwoCase: CaseSKU = {
+  ...stdCase,
+  skuId: 'MAX_L2',
+  name: 'Max Level 2',
+  dims: { l: 2400, w: 1200, h: 400 },
+  stackClass: 'MAX_LEVEL_2',
+};
+
 describe('autoPack', () => {
   it('returns empty result for zero quantities', () => {
     const result = autoPack(truck, [stdCase], new Map([['STD', 0]]));
@@ -237,6 +253,33 @@ describe('autoPack', () => {
     // 16 items with 1450mm depth and 4 columns should use ~5800mm length.
     // Allow slack for tie-breaks and tolerance, but block the previous >8m channel layout.
     expect(maxExtentX).toBeLessThanOrEqual(6200);
+  });
+
+  it('honors TILT_REQUIRED by placing only with tilt Y=90', () => {
+    const qty = 6;
+    const result = autoPack(
+      wideTrailerTruck,
+      [tiltRequiredCase],
+      new Map([[tiltRequiredCase.skuId, qty]]),
+      { maxAttempts: 3, randomSeed: 5 }
+    );
+
+    expect(result.placed).toHaveLength(qty);
+    expect(result.unplaced).toHaveLength(0);
+    expect(result.placed.every(inst => (inst.tilt?.y ?? 0) === 90)).toBe(true);
+  });
+
+  it('enforces MAX_LEVEL_2 and prevents level-3 placements', () => {
+    const qty = 14;
+    const result = autoPack(
+      truck,
+      [maxLevelTwoCase],
+      new Map([[maxLevelTwoCase.skuId, qty]]),
+      { maxAttempts: 3, randomSeed: 11 }
+    );
+
+    expect(result.placed.every(inst => inst.position.z <= 400)).toBe(true);
+    expect(result.unplaced.length).toBeGreaterThan(0);
   });
 
   it('uses stacking when it materially reduces required truck length', () => {

@@ -64,14 +64,19 @@ export function autoPack(
 
   // Build ordered list of cases to place
   const casesToPlace = buildPlacementQueue(skus, skuQuantities);
+  const targetPlacedCount = casesToPlace.length;
 
   if (casesToPlace.length === 0) return createEmptyResult();
 
   let bestResult: AutoPackResult | null = null;
   let bestScore = -Infinity;
+  let noImproveStreak = 0;
+
+  // Keep explicit caller maxAttempts untouched, but use an adaptive default cap.
+  const effectiveMaxAttempts = config.maxAttempts ?? Math.max(8, Math.min(40, targetPlacedCount * 2));
 
   // Multi-start: attempt 0 is always the default ordering, rest shuffle within tiers
-  for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < effectiveMaxAttempts; attempt++) {
     // Combine randomSeed (if provided) with attempt number for deterministic seeding
     const seed = cfg.randomSeed !== undefined ? cfg.randomSeed + attempt : attempt;
     const result = attemptPlacement(truck, skus, casesToPlace, skuQuantities, seed);
@@ -79,11 +84,21 @@ export function autoPack(
     // Primary: maximize placed count; secondary: score quality
     const placed = result.placed.length;
     const best = bestResult?.placed.length ?? -1;
+    let improved = false;
     if (placed >= best) {
       const score = scoreResult(result, truck, cfg.scoreWeights);
       if (placed > best || score > bestScore) {
         bestScore = score;
         bestResult = result;
+        improved = true;
+      }
+    }
+
+    if (bestResult && bestResult.placed.length === targetPlacedCount) {
+      noImproveStreak = improved ? 0 : noImproveStreak + 1;
+      // In default-attempt mode, stop once full placement has plateaued.
+      if (config.maxAttempts === undefined && noImproveStreak >= 8) {
+        break;
       }
     }
   }
@@ -146,10 +161,14 @@ function attemptPlacement(
 
     // Filter obviously out-of-bounds anchors early
     const floorExtremeAnchors = buildFloorExtremeAnchors(placed, truck);
-    const candidateAnchors = deduplicateAnchors([...anchors, ...floorExtremeAnchors]).filter(a =>
-      a.x < truck.innerDims.x &&
-      a.y < truck.innerDims.y &&
-      a.z < truck.innerDims.z
+    const candidateAnchors = prioritizeCandidateAnchors(
+      deduplicateAnchors([...anchors, ...floorExtremeAnchors]).filter(a =>
+        a.x < truck.innerDims.x &&
+        a.y < truck.innerDims.y &&
+        a.z < truck.innerDims.z
+      ),
+      getCurrentMaxX(placed),
+      truck
     );
 
     // Try each anchor × each allowed yaw × each allowed tilt
@@ -193,13 +212,18 @@ function attemptPlacement(
 
     if (candidatePool.length > 0) {
       const deduped = deduplicateInstances(candidatePool);
+      const floorPreferred = isFloorPreferredSku(sku);
+      const floorCandidates = deduped.filter(candidate => candidate.position.z <= SUPPORT_EPS_MM);
+      const prioritized = floorPreferred && floorCandidates.length > 0
+        ? floorCandidates
+        : deduped;
       const currentMaxX = getCurrentMaxX(placed);
       const X_PRIORITY_TOLERANCE_MM = 5;
-      const minProjectedMaxX = deduped.reduce(
+      const minProjectedMaxX = prioritized.reduce(
         (best, candidate) => Math.min(best, Math.max(currentMaxX, candidate.aabb.max.x)),
         Number.POSITIVE_INFINITY
       );
-      const xPriority = deduped.filter(
+      const xPriority = prioritized.filter(
         candidate => Math.max(currentMaxX, candidate.aabb.max.x) <= minProjectedMaxX + X_PRIORITY_TOLERANCE_MM
       );
 
@@ -263,6 +287,7 @@ function attemptPlacement(
       if (placed.length % 3 === 0) {
         anchors = addWallAnchors(anchors, truck);
       }
+      anchors = trimAnchorPool(anchors, getCurrentMaxX(placed), truck);
     } else {
       unplaced.push(pc.skuId);
       // Tally the most common rejection reason for this case
@@ -583,6 +608,40 @@ function deduplicateInstances(instances: CaseInstance[]): CaseInstance[] {
   });
 }
 
+const MAX_CANDIDATE_ANCHORS = 240;
+const MAX_ANCHOR_POOL = 1200;
+
+function anchorPriority(anchor: Vec3, currentMaxX: number, truck: TruckType): number {
+  const midY = truck.innerDims.y / 2;
+  const xSoftLimit = currentMaxX + 2500;
+  const xBackPenalty = anchor.x > xSoftLimit ? (anchor.x - xSoftLimit) * 2 : 0;
+  const zPenalty = anchor.z * 8;
+  const yPenalty = Math.abs(anchor.y - midY) * 0.25;
+  return anchor.x + zPenalty + yPenalty + xBackPenalty;
+}
+
+function prioritizeCandidateAnchors(
+  anchors: Vec3[],
+  currentMaxX: number,
+  truck: TruckType
+): Vec3[] {
+  if (anchors.length <= MAX_CANDIDATE_ANCHORS) return anchors;
+  return [...anchors]
+    .sort((a, b) => anchorPriority(a, currentMaxX, truck) - anchorPriority(b, currentMaxX, truck))
+    .slice(0, MAX_CANDIDATE_ANCHORS);
+}
+
+function trimAnchorPool(
+  anchors: Vec3[],
+  currentMaxX: number,
+  truck: TruckType
+): Vec3[] {
+  if (anchors.length <= MAX_ANCHOR_POOL) return anchors;
+  return [...anchors]
+    .sort((a, b) => anchorPriority(a, currentMaxX, truck) - anchorPriority(b, currentMaxX, truck))
+    .slice(0, MAX_ANCHOR_POOL);
+}
+
 /**
  * Build deterministic floor anchors from recent placed-box edges.
  * This guarantees that tight row/column slots are considered even if the
@@ -594,7 +653,7 @@ function buildFloorExtremeAnchors(
 ): Vec3[] {
   if (placed.length === 0) return [];
 
-  const EDGE_WINDOW = 40;
+  const EDGE_WINDOW = 16;
   const start = Math.max(0, placed.length - EDGE_WINDOW);
 
   const xs = new Set<number>([0]);
@@ -718,7 +777,7 @@ function updateAnchors(
   // spaces that the simple adjacent-only method cannot reach.
   // Example: two boxes in a row with different lengths leave a recess that
   // only a (maxX_other, maxY_new, z) anchor can address.
-  const CROSS_WINDOW = 20; // only look at the most recent boxes to stay O(1) average
+  const CROSS_WINDOW = 12; // only look at the most recent boxes to stay O(1) average
   const recentStart = Math.max(0, allPlaced.length - CROSS_WINDOW);
   for (let i = recentStart; i < allPlaced.length; i++) {
     const other = allPlaced[i];
@@ -1011,6 +1070,11 @@ function projectedFloorVoidRatio(placed: CaseInstance[], candidate: CaseInstance
 
   const fillRatio = Math.min(1, occupiedArea / bboxArea);
   return 1 - fillRatio;
+}
+
+function isFloorPreferredSku(sku: CaseSKU): boolean {
+  const stackRules = parseStackClass(sku.stackClass);
+  return Boolean(sku.tiltAllowed) && stackRules.labels.some(label => label.toLowerCase() === 'cable');
 }
 
 function createEmptyResult(): AutoPackResult {

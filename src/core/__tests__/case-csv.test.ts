@@ -92,6 +92,30 @@ describe('caseCsv', () => {
     expect(lines[1]).toContain('TopBlocked,1,#abcdef,1200,800,500,50,false,false,true,false');
   });
 
+  it('derives On floor=true when FLOOR_ONLY appears with labels', () => {
+    const cases: CaseSKU[] = [
+      {
+        skuId: 'sku-mixed-floor',
+        name: 'MixedFloor',
+        color: '#abcdef',
+        dims: { l: 1000, w: 600, h: 400 },
+        weightKg: 22,
+        uprightOnly: false,
+        allowedYaw: [0, 90],
+        tiltAllowed: false,
+        canBeBase: true,
+        topContactAllowed: true,
+        maxLoadAboveKg: 50,
+        minSupportRatio: 0.75,
+        stackClass: 'small,FLOOR_ONLY',
+      },
+    ];
+
+    const csv = formatCaseCsv(cases, { 'sku-mixed-floor': 3 });
+    const lines = csv.trim().split('\n');
+    expect(lines[1]).toContain('MixedFloor,3,#abcdef,1000,600,400,22,true,false,false,true');
+  });
+
   it('adds and removes floor-only token', () => {
     expect(buildStackClass(undefined, true)).toBe('FLOOR_ONLY');
     expect(buildStackClass('A,FLOOR_ONLY', false)).toBe('A');

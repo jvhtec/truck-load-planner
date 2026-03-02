@@ -15,6 +15,7 @@ import { validatePlacement } from './core/validate';
 import { SplashScreen } from './components/SplashScreen';
 import './App.css';
 import { buildStackClass, formatCaseCsv, parseCaseCsv, sanitizeSkuId } from './lib/caseCsv';
+import { composeStackClass, parseStackClass } from './lib/stackRules';
 
 const ORDER_BUCKET_MM = 100;
 
@@ -207,7 +208,7 @@ function App() {
   const [touchDropId, setTouchDropId] = useState<string | null>(null);
   const [viewLocked, setViewLocked] = useState(false);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('iso');
-  const [itemActionsMenu, setItemActionsMenu] = useState<{ id: string; x: number; y: number; tiltAllowed: boolean } | null>(null);
+  const [itemActionsMenu, setItemActionsMenu] = useState<{ id: string; x: number; y: number; tiltAllowed: boolean; tiltRequired: boolean } | null>(null);
   const [selectedStagedIds, setSelectedStagedIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [printing, setPrinting] = useState(false);
@@ -241,6 +242,7 @@ function App() {
     skuId: '', name: '', l: 800, w: 600, h: 400, weightKg: 45,
     uprightOnly: false, canBeBase: true, topContactAllowed: true,
     maxLoadAboveKg: 90, minSupportRatio: 0.75, color: '#6366f1', tiltAllowed: false,
+    stackLabels: '', floorOnly: false, tiltRequired: false, maxStackLevel: '',
   });
 
   const t = lang === 'es'
@@ -315,6 +317,12 @@ function App() {
       caseWeightKg: 'Peso (kg)',
       stackable: 'Apilable (Puede ser base)',
       tiltAllowed: 'Inclinacion Permitida (Y 90°)',
+      stackClass: 'Clase de Apilado',
+      stackClassHint: 'Etiquetas/grupos (separados por coma)',
+      loadingRules: 'Reglas de Carga',
+      onFloorOnly: 'Solo en Suelo',
+      alwaysTilted: 'Siempre Inclinado (Y 90°)',
+      maxStackLevel: 'Nivel Maximo de Apilado',
       color: 'Color',
       saveLoadPlan: 'Guardar Plan de Carga',
       planNamePlaceholder: 'Nombre del plan...',
@@ -435,6 +443,12 @@ function App() {
       caseWeightKg: 'Weight (kg)',
       stackable: 'Stackable (Can Be Base)',
       tiltAllowed: 'Tilt Allowed (Y 90°)',
+      stackClass: 'Stack Class',
+      stackClassHint: 'Labels/groups (comma separated)',
+      loadingRules: 'Loading Rules',
+      onFloorOnly: 'On Floor Only',
+      alwaysTilted: 'Always Tilted (Y 90°)',
+      maxStackLevel: 'Max Stack Level',
       color: 'Color',
       saveLoadPlan: 'Save Load Plan',
       planNamePlaceholder: 'Plan name...',
@@ -581,6 +595,8 @@ function App() {
 
   const selectedInstance = state.instances.find(i => i.id === state.selectedInstanceId);
   const selectedSku = selectedInstance ? state.skus.get(selectedInstance.skuId) : null;
+  const selectedStackRules = selectedSku ? parseStackClass(selectedSku.stackClass) : null;
+  const selectedTiltRequired = selectedStackRules?.tiltRequired === true;
   const stagedInstances = state.instances.filter(i => i.staged);
   const placedInstances = state.instances.filter(i => !i.staged);
   const caseInstanceCounts = state.instances.reduce((acc, inst) => {
@@ -1210,7 +1226,9 @@ function App() {
                   const instance = state.instances.find(i => i.id === itemActionsMenu.id);
                   if (!instance) return;
                   const current = instance.tilt ?? { y: 0 };
-                  const nextTilt = current.y === 90 ? { y: 0 } : { y: 90 };
+                  const nextTilt = itemActionsMenu.tiltRequired
+                    ? { y: 90 }
+                    : (current.y === 90 ? { y: 0 } : { y: 90 });
                   const result = actions.updateInstance(itemActionsMenu.id, { tilt: nextTilt });
                   if (!result.valid) console.warn('Tilt failed:', result);
                   setItemActionsMenu(null);
@@ -1254,11 +1272,15 @@ function App() {
             }}
             onOpenItemActions={({ id, clientX, clientY, tiltAllowed }) => {
               actions.selectInstance(id);
+              const instance = state.instances.find(i => i.id === id);
+              const sku = instance ? state.skus.get(instance.skuId) : null;
+              const stackRules = sku ? parseStackClass(sku.stackClass) : null;
               setItemActionsMenu({
                 id,
                 x: Math.max(8, Math.min(clientX, window.innerWidth - 170)),
                 y: Math.max(8, Math.min(clientY, window.innerHeight - 100)),
-                tiltAllowed,
+                tiltAllowed: tiltAllowed || Boolean(stackRules?.tiltRequired),
+                tiltRequired: Boolean(stackRules?.tiltRequired),
               });
             }}
           />
@@ -1278,11 +1300,12 @@ function App() {
                 const nextYaw = (((selectedInstance.yaw + 90) % 360) as Yaw);
                 actions.updateInstance(selectedInstance.id, { yaw: nextYaw });
               }}>{t.rotate90}</button>
-              {selectedSku.tiltAllowed && (
+              {(selectedSku.tiltAllowed || selectedTiltRequired) && (
                 <button onClick={() => {
+                  if (selectedTiltRequired) return;
                   const current = selectedInstance.tilt ?? { y: 0 };
                   actions.updateInstance(selectedInstance.id, { tilt: current.y === 90 ? { y: 0 } : { y: 90 } });
-                }}>{(selectedInstance.tilt?.y ?? 0) === 90 ? t.noTilt : t.tiltY90}</button>
+                }} disabled={selectedTiltRequired}>{(selectedInstance.tilt?.y ?? 0) === 90 ? t.noTilt : t.tiltY90}</button>
               )}
               <button className="danger" onClick={() => actions.removeCase(selectedInstance.id)}>{t.remove}</button>
             </div>
@@ -1428,14 +1451,18 @@ function App() {
               <div className="yaw-buttons">
                 <button
                   className={(selectedInstance.tilt?.y ?? 0) === 0 ? 'selected' : ''}
-                  onClick={() => actions.updateInstance(selectedInstance.id, { tilt: { y: 0 } })}
+                  onClick={() => {
+                    if (selectedTiltRequired) return;
+                    actions.updateInstance(selectedInstance.id, { tilt: { y: 0 } });
+                  }}
+                  disabled={selectedTiltRequired}
                 >
                   {t.noTilt}
                 </button>
                 <button
                   className={(selectedInstance.tilt?.y ?? 0) === 90 ? 'selected' : ''}
                   onClick={() => actions.updateInstance(selectedInstance.id, { tilt: { y: 90 } })}
-                  disabled={!selectedSku?.tiltAllowed}
+                  disabled={!(selectedSku?.tiltAllowed || selectedTiltRequired)}
                 >
                   {t.tiltY90}
                 </button>
@@ -1551,26 +1578,81 @@ function App() {
                 <span>{t.stackable}</span>
               </label>
               <label className="toggle-input">
-                <input type="checkbox" checked={caseForm.tiltAllowed} onChange={e => setCaseForm({ ...caseForm, tiltAllowed: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={caseForm.tiltAllowed}
+                  disabled={caseForm.tiltRequired}
+                  onChange={e => setCaseForm({ ...caseForm, tiltAllowed: e.target.checked })}
+                />
                 <span>{t.tiltAllowed}</span>
               </label>
+              <label className="form-field">
+                <span>{t.stackClass}</span>
+                <input
+                  type="text"
+                  placeholder={t.stackClassHint}
+                  value={caseForm.stackLabels}
+                  onChange={e => setCaseForm({ ...caseForm, stackLabels: e.target.value })}
+                />
+              </label>
+              <div className="form-field loading-rules-group">
+                <span>{t.loadingRules}</span>
+                <div className="position-inputs compact">
+                  <label className="toggle-input">
+                    <input type="checkbox" checked={caseForm.floorOnly} onChange={e => setCaseForm({ ...caseForm, floorOnly: e.target.checked })} />
+                    <span>{t.onFloorOnly}</span>
+                  </label>
+                  <label className="toggle-input">
+                    <input
+                      type="checkbox"
+                      checked={caseForm.tiltRequired}
+                      onChange={e => setCaseForm({ ...caseForm, tiltRequired: e.target.checked, tiltAllowed: e.target.checked ? true : caseForm.tiltAllowed })}
+                    />
+                    <span>{t.alwaysTilted}</span>
+                  </label>
+                  <label>
+                    {t.maxStackLevel}
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={caseForm.maxStackLevel}
+                      onChange={e => setCaseForm({ ...caseForm, maxStackLevel: e.target.value })}
+                    />
+                  </label>
+                </div>
+              </div>
               <label className="color-input">{t.color} <input type="color" value={caseForm.color} onChange={e => setCaseForm({ ...caseForm, color: e.target.value })} /></label>
             </div>
             <div className="dialog-actions">
               <button onClick={() => setShowNewCase(false)}>{t.cancel}</button>
               <button className="primary" onClick={async () => {
+                const rawMaxStackLevel = Number(caseForm.maxStackLevel);
+                const maxStackLevel = Number.isFinite(rawMaxStackLevel) && rawMaxStackLevel >= 1
+                  ? Math.floor(rawMaxStackLevel)
+                  : undefined;
+                const labels = parseStackClass(caseForm.stackLabels).labels;
+                const nextStackClass = composeStackClass({
+                  labels,
+                  floorOnly: caseForm.floorOnly,
+                  tiltRequired: caseForm.tiltRequired,
+                  maxStackLevel,
+                });
+                const nextUprightOnly = caseForm.tiltRequired ? false : caseForm.uprightOnly;
+                const nextTiltAllowed = caseForm.tiltRequired ? true : caseForm.tiltAllowed;
                 await actions.createCase({
                   skuId: caseForm.skuId,
                   name: caseForm.name,
                   dims: { l: caseForm.l, w: caseForm.w, h: caseForm.h },
                   weightKg: caseForm.weightKg,
-                  uprightOnly: caseForm.uprightOnly,
+                  uprightOnly: nextUprightOnly,
                   allowedYaw: [0, 90, 180, 270],
                   canBeBase: caseForm.canBeBase,
-                  tiltAllowed: caseForm.tiltAllowed,
+                  tiltAllowed: nextTiltAllowed,
                   topContactAllowed: caseForm.topContactAllowed,
                   maxLoadAboveKg: caseForm.maxLoadAboveKg,
                   minSupportRatio: caseForm.minSupportRatio,
+                  stackClass: nextStackClass ?? null,
                   color: caseForm.color,
                 });
                 setShowNewCase(false);

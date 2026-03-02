@@ -622,6 +622,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
           skuWeights,
           spatialIndex,
         }).valid;
+        const X_TOL = 5;
+        const Z_TOL = 5;
+        const XY_TOL = 5;
 
         for (const orientation of orientations) {
           const sampleAabb = computeOrientedAABB(sku, { x: 0, y: 0, z: 0 }, orientation.yaw, orientation.tilt);
@@ -632,24 +635,27 @@ export function usePlanner(): [PlannerState, PlannerActions] {
           const xValues = buildScanValues(maxX);
           const yValues = buildScanValues(maxY);
 
-          for (const z of zLevels) {
-            for (const x of xValues) {
-              for (const y of yValues) {
-                const candidate: CaseInstance = {
-                  ...staged,
-                  position: { x, y, z },
-                  yaw: orientation.yaw,
-                  tilt: orientation.tilt,
-                  aabb: computeOrientedAABB(sku, { x, y, z }, orientation.yaw, orientation.tilt),
-                  staged: false,
-                };
-                if (isValid(candidate)) {
+          // Search the near-front band first. Full-range scan is only used as fallback.
+          const nearLimit = Math.min(maxX, currentMaxX + xSpan + AUTOPLACE_STEP_MM * 4);
+          const nearXValues = xValues.filter(x => x <= nearLimit);
+          const farXValues = nearLimit < maxX ? xValues.filter(x => x > nearLimit) : [];
+
+          const evaluateXValues = (values: number[]) => {
+            for (const z of zLevels) {
+              for (const x of values) {
+                for (const y of yValues) {
+                  const candidate: CaseInstance = {
+                    ...staged,
+                    position: { x, y, z },
+                    yaw: orientation.yaw,
+                    tilt: orientation.tilt,
+                    aabb: computeOrientedAABB(sku, { x, y, z }, orientation.yaw, orientation.tilt),
+                    staged: false,
+                  };
+                  if (!isValid(candidate)) continue;
+
                   const compacted = compactAutoPlacedCandidate(candidate, sku, isValid);
                   const projectedMaxX = Math.max(currentMaxX, compacted.aabb.max.x);
-
-                  const X_TOL = 5;
-                  const Z_TOL = 5;
-                  const XY_TOL = 5;
                   const better =
                     projectedMaxX < bestProjectedMaxX - X_TOL ||
                     (Math.abs(projectedMaxX - bestProjectedMaxX) <= X_TOL && compacted.position.z < bestZ - Z_TOL) ||
@@ -671,6 +677,16 @@ export function usePlanner(): [PlannerState, PlannerActions] {
                 }
               }
             }
+          };
+
+          evaluateXValues(nearXValues);
+          if (!placedCandidate && farXValues.length > 0) {
+            evaluateXValues(farXValues);
+          }
+
+          // Cannot beat current used length; remaining orientations won't improve projected maxX.
+          if (bestProjectedMaxX <= currentMaxX + X_TOL) {
+            break;
           }
         }
 
@@ -1033,6 +1049,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   }, []);
 
   const createCase = useCallback(async (input: CreateCaseInput) => {
+    const normalizedStackClass = normalizeStackClassInput(input.stackClass);
     const { error } = await supabase.from('case_skus').insert({
       sku_id: input.skuId,
       name: input.name,
@@ -1047,7 +1064,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       top_contact_allowed: input.topContactAllowed,
       max_load_above_kg: input.maxLoadAboveKg,
       min_support_ratio: input.minSupportRatio,
-      stack_class: input.stackClass || null,
+      stack_class: normalizedStackClass,
       color_hex: input.color || null,
       is_container: input.isContainer ?? false,
     });
@@ -1067,7 +1084,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         topContactAllowed: input.topContactAllowed,
         maxLoadAboveKg: input.maxLoadAboveKg,
         minSupportRatio: input.minSupportRatio,
-        stackClass: input.stackClass,
+        stackClass: normalizedStackClass ?? undefined,
         color: input.color,
         isContainer: input.isContainer ?? false,
       };
@@ -1094,7 +1111,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     if (updates.topContactAllowed !== undefined) payload.top_contact_allowed = updates.topContactAllowed;
     if (updates.maxLoadAboveKg !== undefined) payload.max_load_above_kg = updates.maxLoadAboveKg;
     if (updates.minSupportRatio !== undefined) payload.min_support_ratio = updates.minSupportRatio;
-    if (updates.stackClass !== undefined) payload.stack_class = updates.stackClass || null;
+    if (Object.prototype.hasOwnProperty.call(updates, 'stackClass')) {
+      payload.stack_class = normalizeStackClassInput(updates.stackClass ?? null);
+    }
     if (updates.color !== undefined) payload.color_hex = updates.color || null;
     if (updates.isContainer !== undefined) payload.is_container = updates.isContainer;
 
