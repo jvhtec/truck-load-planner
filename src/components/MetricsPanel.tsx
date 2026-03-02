@@ -211,16 +211,19 @@ export function MetricsPanel({
               {metrics.axleGroupLoads.map(ag => (
                 <AxleGroupBar key={ag.id} group={ag} lang={lang} />
               ))}
-              {metrics.kingpinKg !== undefined && (
-                <div className={`metric ${getStatus(
-                  (metrics.kingpinKg / (metrics.kingpinMaxKg ?? metrics.kingpinKg)) * 100, 100)}`}>
-                  <span className="label">{t.kingpin}</span>
-                  <span className="value">
-                    {metrics.kingpinKg.toFixed(1)} kg
-                    {metrics.kingpinMaxKg !== undefined && ` / ${metrics.kingpinMaxKg} kg`}
-                  </span>
-                </div>
-              )}
+              {metrics.kingpinKg !== undefined && (() => {
+                const denom = metrics.kingpinMaxKg ?? metrics.kingpinKg;
+                const percent = denom === 0 ? 0 : (metrics.kingpinKg / denom) * 100;
+                return (
+                  <div className={`metric ${getStatus(percent, 100)}`}>
+                    <span className="label">{t.kingpin}</span>
+                    <span className="value">
+                      {metrics.kingpinKg.toFixed(1)} kg
+                      {metrics.kingpinMaxKg !== undefined && ` / ${metrics.kingpinMaxKg} kg`}
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             /* Legacy: two-axle bars (unchanged) */

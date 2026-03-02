@@ -10,6 +10,7 @@ import type {
   AutoPackResult,
   ValidationError,
   VehicleConfig,
+  TrailerMetrics,
 } from './types';
 import { createInstance, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
@@ -203,11 +204,11 @@ function attemptPlacementV3(
     }
   }
 
-  // Compute metrics
-  const metrics = computeResultMetrics(placed, skuWeights, vehicle);
-  const trailerMetrics = vehicle.kind === 'tractor-trailer'
+  // Compute metrics — for tractor-trailer, compute once and share with computeResultMetrics
+  const trailerMetrics: TrailerMetrics | undefined = vehicle.kind === 'tractor-trailer'
     ? computeTrailerMetrics(placed, skuWeights, vehicle.vehicle)
     : undefined;
+  const metrics = computeResultMetrics(placed, skuWeights, vehicle, trailerMetrics);
 
   return {
     placed,
@@ -240,12 +241,13 @@ function computeResultMetrics(
   placed: CaseInstance[],
   skuWeights: Map<string, number>,
   vehicle: VehicleConfig,
+  precomputedTrailerMetrics?: TrailerMetrics,
 ): AutoPackResult['metrics'] {
   if (vehicle.kind === 'rigid') {
     return computeMetrics(placed, skuWeights, vehicle.vehicle);
   }
   if (vehicle.kind === 'tractor-trailer') {
-    const tm = computeTrailerMetrics(placed, skuWeights, vehicle.vehicle);
+    const tm = precomputedTrailerMetrics ?? computeTrailerMetrics(placed, skuWeights, vehicle.vehicle);
     const steer = tm.tractorAxleLoads[0];
     const trailerAxle = tm.trailerAxleLoads[0];
     return {

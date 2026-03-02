@@ -440,8 +440,13 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
         if (trucksRes.error) throw trucksRes.error;
         if (casesRes.error) throw casesRes.error;
-        // rigid_vehicles / axle_groups / tractor_trailer_rigs are optional — ignore errors
-        // (tables may not exist in older deployments before the migration is applied)
+        // rigid_vehicles / axle_groups / tractor_trailer_rigs are optional:
+        // suppress only "table does not exist" (Postgres code 42P01); surface all other errors.
+        const isMissingTable = (err: { code?: string; message?: string }) =>
+          err.code === '42P01' || (err.message ?? '').includes('does not exist');
+        if (rigidVehiclesRes.error && !isMissingTable(rigidVehiclesRes.error)) throw rigidVehiclesRes.error;
+        if (axleGroupsRes.error && !isMissingTable(axleGroupsRes.error)) throw axleGroupsRes.error;
+        if (rigsRes.error && !isMissingTable(rigsRes.error)) throw rigsRes.error;
 
         const trucks = (trucksRes.data as DbTruck[]).map(dbToTruck);
         const cases = (casesRes.data as DbCaseSku[]).map(dbToCaseSku);
@@ -493,7 +498,6 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   const setRig = useCallback((rig: TractorTrailer) => {
     setState(prev => ({
       ...prev,
-      truck: null,
       activeRig: rig,
       instances: [],
       metrics: null,
@@ -817,8 +821,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
   const clearAll = useCallback(() => {
     setState(prev => ({
       ...prev,
+      activeRig: null,
       instances: [],
       metrics: prev.truck ? updateMetrics([], prev.truck, prev.skus) : null,
+      trailerMetrics: null,
       selectedInstanceId: null,
       validation: null,
     }));
@@ -918,8 +924,10 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       return {
         ...prev,
         truck,
+        activeRig: null,
         instances,
         metrics: updateMetrics(instances, truck, prev.skus),
+        trailerMetrics: null,
         validation: null,
         error: null,
       };

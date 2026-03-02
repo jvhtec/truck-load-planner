@@ -48,6 +48,11 @@ export function truckTypeToRigidVehicle(truck: TruckType): RigidVehicle {
  * Build a synthetic TruckType from a trailer body (for geometry-only validation
  * in validatePlacement, which still uses truck.innerDims for OUT_OF_BOUNDS checks).
  */
+
+// Sentinel used when a RigidVehicle has no front or rear axle group:
+// represents an effectively unconstrained axle (no load limit enforced).
+const UNLIMITED_PAYLOAD_KG = 9999999;
+
 export function rigidVehicleToTruckType(vehicle: RigidVehicle): TruckType {
   const sorted = [...vehicle.axleGroups].sort((a, b) => a.xMm - b.xMm);
   const front = sorted[0];
@@ -60,8 +65,8 @@ export function rigidVehicleToTruckType(vehicle: RigidVehicle): TruckType {
     axle: {
       frontX: front?.xMm ?? 0,
       rearX: rear?.xMm ?? vehicle.innerDimsMm.x,
-      maxFrontKg: front?.maxKg ?? 9999999,
-      maxRearKg: rear?.maxKg ?? 9999999,
+      maxFrontKg: front?.maxKg ?? UNLIMITED_PAYLOAD_KG,
+      maxRearKg: rear?.maxKg ?? UNLIMITED_PAYLOAD_KG,
     },
     balance: { maxLeftRightPercentDiff: vehicle.balance.maxLeftRightPercentDiff },
     obstacles: vehicle.obstacles,

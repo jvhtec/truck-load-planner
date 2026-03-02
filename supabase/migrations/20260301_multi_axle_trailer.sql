@@ -9,13 +9,15 @@ create table if not exists public.rigid_vehicles (
   id                       uuid primary key default gen_random_uuid(),
   vehicle_id               text unique not null,
   name                     text not null,
-  inner_length_mm          integer not null,
-  inner_width_mm           integer not null,
-  inner_height_mm          integer not null,
-  empty_weight_kg          numeric(10,3) not null,
+  inner_length_mm          integer not null check (inner_length_mm > 0),
+  inner_width_mm           integer not null check (inner_width_mm > 0),
+  inner_height_mm          integer not null check (inner_height_mm > 0),
+  empty_weight_kg          numeric(10,3) not null check (empty_weight_kg >= 0),
   -- X coordinate of vehicle's own empty centre-of-mass (from front of body, mm)
-  empty_com_x_mm           numeric(10,3) not null,
-  max_lr_imbalance_percent numeric(5,2)  not null default 10.0,
+  empty_com_x_mm           numeric(10,3) not null
+                             check (empty_com_x_mm >= 0 and empty_com_x_mm <= inner_length_mm),
+  max_lr_imbalance_percent numeric(5,2)  not null default 10.0
+                             check (max_lr_imbalance_percent between 0 and 100),
   -- Optional JSON array of AABB keepouts [{min:{x,y,z},max:{x,y,z}}, ...]
   obstacles                jsonb,
   created_at               timestamptz default now(),
@@ -33,11 +35,11 @@ create table if not exists public.axle_groups (
   -- Short identifier: "steer" | "drive" | "trailer" | "tag" | custom
   axle_id           text not null,
   -- Position from front of vehicle body (mm)
-  x_mm              numeric(10,3) not null,
+  x_mm              numeric(10,3) not null check (x_mm >= 0),
   -- Maximum legal load on this axle group (kg)
-  max_kg            numeric(10,3) not null,
+  max_kg            numeric(10,3) not null check (max_kg >= 0),
   -- Optional minimum load (e.g. steer axle steering authority; kg)
-  min_kg            numeric(10,3),
+  min_kg            numeric(10,3) check (min_kg >= 0 and (min_kg is null or min_kg <= max_kg)),
   -- Display/sort order (0 = front-most)
   sort_order        integer not null default 0,
   created_at        timestamptz default now()
@@ -54,15 +56,16 @@ create table if not exists public.tractor_trailer_rigs (
   -- Short human-readable identifier (e.g. "18t-semi-6x4")
   rig_id                        text unique not null,
   name                          text not null,
-  -- Foreign keys to the two rigid_vehicle bodies
+  -- Foreign keys to the two rigid_vehicle bodies (tractor and trailer must differ)
   tractor_id                    uuid not null references public.rigid_vehicles(id),
   trailer_id                    uuid not null references public.rigid_vehicles(id),
+  check (tractor_id <> trailer_id),
   -- Kingpin position in the trailer body frame (mm from front of trailer)
   kingpin_x_on_trailer_mm       numeric(10,3) not null,
   -- Fifth-wheel / kingpin position in the tractor body frame (mm from front of tractor)
   kingpin_x_on_tractor_mm       numeric(10,3) not null,
   -- Optional maximum vertical kingpin load (kg); null = unconstrained
-  max_kingpin_kg                numeric(10,3),
+  max_kingpin_kg                numeric(10,3) check (max_kingpin_kg is null or max_kingpin_kg >= 0),
   created_at                    timestamptz default now(),
   updated_at                    timestamptz default now()
 );
@@ -96,6 +99,7 @@ create policy "Allow public read rigid_vehicles"
 
 create policy "Allow authenticated write rigid_vehicles"
   on public.rigid_vehicles for all
+  to authenticated
   using (true) with check (true);
 
 create policy "Allow public read axle_groups"
@@ -103,6 +107,7 @@ create policy "Allow public read axle_groups"
 
 create policy "Allow authenticated write axle_groups"
   on public.axle_groups for all
+  to authenticated
   using (true) with check (true);
 
 create policy "Allow public read tractor_trailer_rigs"
@@ -110,6 +115,7 @@ create policy "Allow public read tractor_trailer_rigs"
 
 create policy "Allow authenticated write tractor_trailer_rigs"
   on public.tractor_trailer_rigs for all
+  to authenticated
   using (true) with check (true);
 
 -- ============================================================================

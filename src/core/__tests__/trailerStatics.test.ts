@@ -286,26 +286,6 @@ describe('computeTrailerMetrics — full rig metrics', () => {
 // Integration tests (PRD §10.2)
 // ============================================================================
 
-function makeCtxForRig(instances: CaseInstance[]): ValidatorContext {
-  const skus = new Map<string, CaseSKU>([['STD', stdSku]]);
-  const skuWeights = makeSkuWeights([stdSku]);
-  const supportGraph = new SupportGraph(skuWeights);
-  const spatialIndex = new SpatialIndex();
-  for (const inst of instances) {
-    supportGraph.addInstance(inst, instances);
-    spatialIndex.add(inst.id, inst.aabb);
-  }
-  return {
-    truck: rigidVehicleToTruckType(trailer),
-    vehicle: { kind: 'tractor-trailer', vehicle: rig },
-    skus,
-    instances,
-    supportGraph,
-    skuWeights,
-    spatialIndex,
-  };
-}
-
 describe('Integration: tractor-trailer validation — PRD §10.2', () => {
   // Scenario 1: forward-heavy load overloads steer
   it('AXLE_STEER_OVER when a very heavy load is placed near the kingpin (forward-heavy)', () => {
@@ -415,12 +395,8 @@ describe('Integration: tractor-trailer validation — PRD §10.2', () => {
 
   // Scenario 5: exact threshold accepted
   it('accepts placement where trailer axle load is exactly at the limit', () => {
-    // trailerAxleKg = W * d / L = maxKg (18 000) exactly
-    // d / L = 18000 / W → COM at kingpinX + (18000/W) * L
-    const kingpinX = rig.coupling.kingpinX_onTrailerMm; // 1200
-    const L = 12200 - kingpinX; // 11000
+    // trailerAxleKg ≈ W when COM is placed at the trailer axle position (x=12200)
     const W = 18000;
-    const d = W * L / W; // d = L → COM at trailerAxle
     // W = 18000 kg, place COM exactly at trailerAxle position
     // That means comX = 12200, which is the axle position itself
     const exactSku: CaseSKU = { ...stdSku, skuId: 'STD', weightKg: W };

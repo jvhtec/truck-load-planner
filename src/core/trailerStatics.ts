@@ -193,7 +193,7 @@ export function computeTrailerMetrics(
   const com = computeCOM(instances, skuWeights);
 
   // --- Trailer statics ---
-  const { trailerAxleKg, kingpinKg, trailerAxleGroup } = computeTrailerAxleLoads(
+  const { trailerAxleKg, kingpinKg } = computeTrailerAxleLoads(
     totalCargoWeightKg,
     com.x,
     trailer,
@@ -205,8 +205,8 @@ export function computeTrailerMetrics(
     .sort((a, b) => a.xMm - b.xMm)
     .map(ag => {
       // For a single axle group: receives the full trailerAxleKg.
-      // For tandem bogies: split proportionally (reserved for v3.1).
-      const loadKg = ag.id === trailerAxleGroup.id ? trailerAxleKg : trailerAxleKg;
+      // TODO v3.1: for tandem bogies, split proportionally using trailerAxleGroup.id / trailerAxleKg.
+      const loadKg = trailerAxleKg;
       const utilizationPct = ag.maxKg > 0 ? (loadKg / ag.maxKg) * 100 : 0;
       const status: AxleGroupLoad['status'] =
         loadKg > ag.maxKg
