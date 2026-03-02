@@ -9,6 +9,7 @@ import type {
   CaseInstance,
   AutoPackResult,
   ValidationError,
+  Yaw,
 } from './types';
 import { createInstance, computeOrientedAABB, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
@@ -65,7 +66,7 @@ export function autoPack(
   for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
     // Combine randomSeed (if provided) with attempt number for deterministic seeding
     const seed = cfg.randomSeed !== undefined ? cfg.randomSeed + attempt : attempt;
-    const result = attemptPlacement(truck, skus, casesToPlace, seed);
+    const result = attemptPlacement(truck, skus, casesToPlace, skuQuantities, seed);
 
     // Primary: maximize placed count; secondary: score quality
     const placed = result.placed.length;
@@ -90,6 +91,7 @@ function attemptPlacement(
   truck: TruckType,
   skus: CaseSKU[],
   casesToPlace: PlacementCase[],
+  skuQuantities: Map<string, number>,
   attemptNumber: number
 ): AutoPackResult {
   const skuMap = new Map(skus.map(s => [s.skuId, s]));
@@ -119,6 +121,7 @@ function attemptPlacement(
 
   // Shuffle cases within same priority tier for multi-start diversity
   const shuffled = shuffleWithinTiers(casesToPlace, attemptNumber);
+  const preferredYawsBySku = buildPreferredYawMap(truck, skus, skuQuantities);
 
   for (const pc of shuffled) {
     const sku = skuMap.get(pc.skuId);
@@ -129,9 +132,13 @@ function attemptPlacement(
 
     let bestPlacement: { instance: CaseInstance; score: number } | null = null;
     const lastViolations: ValidationError[] = [];
+    const preferredCandidates: CaseInstance[] = [];
+    const fallbackCandidates: CaseInstance[] = [];
+    const preferredYaws = preferredYawsBySku.get(pc.skuId);
 
     // Filter obviously out-of-bounds anchors early
-    const candidateAnchors = anchors.filter(a =>
+    const floorExtremeAnchors = buildFloorExtremeAnchors(placed, truck);
+    const candidateAnchors = deduplicateAnchors([...anchors, ...floorExtremeAnchors]).filter(a =>
       a.x < truck.innerDims.x &&
       a.y < truck.innerDims.y &&
       a.z < truck.innerDims.z
@@ -151,16 +158,63 @@ function attemptPlacement(
 
         if (validation.valid) {
           const compacted = compactPlacementVariants(instance, sku, ctx, truck);
-          for (const candidate of compacted) {
-            const score = scorePlacement(candidate, placed, truck, skuWeights);
-            if (!bestPlacement || score > bestPlacement.score) {
-              bestPlacement = { instance: candidate, score };
-            }
+          if (preferredYaws && preferredYaws.has(yaw)) {
+            preferredCandidates.push(...compacted);
+          } else {
+            fallbackCandidates.push(...compacted);
           }
         } else {
           for (const v of validation.violations) {
             lastViolations.push(v);
           }
+        }
+      }
+    }
+
+    const candidatePool = preferredCandidates.length > 0 ? preferredCandidates : fallbackCandidates;
+
+    if (candidatePool.length > 0) {
+      const deduped = deduplicateInstances(candidatePool);
+      const minZ = deduped.reduce(
+        (lowest, candidate) => Math.min(lowest, candidate.position.z),
+        Number.POSITIVE_INFINITY
+      );
+      const FLOOR_PRIORITY_TOLERANCE_MM = 5;
+      const zPriority = deduped.filter(
+        candidate => candidate.position.z <= minZ + FLOOR_PRIORITY_TOLERANCE_MM
+      );
+
+      const currentMaxX = getCurrentMaxX(placed);
+      const X_PRIORITY_TOLERANCE_MM = 5;
+      const minProjectedMaxX = zPriority.reduce(
+        (best, candidate) => Math.min(best, Math.max(currentMaxX, candidate.aabb.max.x)),
+        Number.POSITIVE_INFINITY
+      );
+      const xPriority = zPriority.filter(
+        candidate => Math.max(currentMaxX, candidate.aabb.max.x) <= minProjectedMaxX + X_PRIORITY_TOLERANCE_MM
+      );
+
+      const floorVoidByKey = new Map<string, number>();
+      for (const candidate of xPriority) {
+        const key = instancePositionKey(candidate);
+        floorVoidByKey.set(key, projectedFloorVoidRatio(placed, candidate));
+      }
+      const minVoid = xPriority.reduce((best, candidate) => {
+        const key = instancePositionKey(candidate);
+        const candidateVoid = floorVoidByKey.get(key) ?? Number.POSITIVE_INFINITY;
+        return Math.min(best, candidateVoid);
+      }, Number.POSITIVE_INFINITY);
+      const FLOOR_VOID_TOLERANCE = 0.01;
+      const compactnessPriority = xPriority.filter(candidate => {
+        const key = instancePositionKey(candidate);
+        const candidateVoid = floorVoidByKey.get(key) ?? Number.POSITIVE_INFINITY;
+        return candidateVoid <= minVoid + FLOOR_VOID_TOLERANCE;
+      });
+
+      for (const candidate of compactnessPriority) {
+        const score = scorePlacement(candidate, placed, truck);
+        if (!bestPlacement || score > bestPlacement.score) {
+          bestPlacement = { instance: candidate, score };
         }
       }
     }
@@ -284,6 +338,60 @@ function sameTier(a: PlacementCase, b: PlacementCase): boolean {
   );
 }
 
+function buildPreferredYawMap(
+  truck: TruckType,
+  skus: CaseSKU[],
+  quantities: Map<string, number>
+): Map<string, Set<Yaw>> {
+  const preferred = new Map<string, Set<Yaw>>();
+
+  for (const sku of skus) {
+    const qty = quantities.get(sku.skuId) ?? 0;
+    if (qty <= 0 || sku.allowedYaw.length <= 1) continue;
+
+    const orientations = new Map<string, { xSpan: number; ySpan: number; yaws: Yaw[] }>();
+
+    for (const yaw of sku.allowedYaw) {
+      const { xSpan, ySpan } = getFootprintForYaw(sku, yaw);
+      const key = `${xSpan}|${ySpan}`;
+      const existing = orientations.get(key);
+      if (existing) {
+        existing.yaws.push(yaw);
+      } else {
+        orientations.set(key, { xSpan, ySpan, yaws: [yaw] });
+      }
+    }
+
+    let best: { score: number; columns: number; yaws: Yaw[] } | null = null;
+    for (const option of orientations.values()) {
+      const columns = Math.floor(truck.innerDims.y / option.ySpan);
+      if (columns <= 0) continue;
+
+      const rows = Math.ceil(qty / columns);
+      const requiredLength = rows * option.xSpan;
+      const widthSlack = truck.innerDims.y - columns * option.ySpan;
+      const score = requiredLength + widthSlack * 0.5;
+
+      if (!best || score < best.score || (score === best.score && columns > best.columns)) {
+        best = { score, columns, yaws: option.yaws };
+      }
+    }
+
+    if (best) {
+      preferred.set(sku.skuId, new Set(best.yaws));
+    }
+  }
+
+  return preferred;
+}
+
+function getFootprintForYaw(sku: CaseSKU, yaw: Yaw): { xSpan: number; ySpan: number } {
+  if (yaw === 0 || yaw === 180) {
+    return { xSpan: sku.dims.l, ySpan: sku.dims.w };
+  }
+  return { xSpan: sku.dims.w, ySpan: sku.dims.l };
+}
+
 // ============================================================================
 // Anchor Point Management
 // ============================================================================
@@ -302,19 +410,48 @@ function compactPlacementVariants(
   ctx: ValidatorContext,
   truck: TruckType
 ): CaseInstance[] {
-  // First settle vertically, then front-to-back for tighter longitudinal packing.
+  // First settle vertically. Then iteratively compact X <-> Y until convergence.
+  // This closes holes that appear when a Y move enables an additional X move.
   const settled = minimizeAlongAxis(instance, sku, ctx, 'z');
+  const leftPacked = compactToCorner(settled, sku, ctx, truck, 'left');
+  const rightPacked = compactToCorner(settled, sku, ctx, truck, 'right');
   const pushedFront = minimizeAlongAxis(settled, sku, ctx, 'x');
-
-  // Explore both lateral directions and keep both variants for scoring.
-  const leftPacked = minimizeAlongAxis(pushedFront, sku, ctx, 'y');
-  const rightPacked = maximizeAlongAxis(pushedFront, sku, ctx, truck, 'y');
 
   return deduplicateInstances([
     pushedFront,
     leftPacked,
     rightPacked,
   ]);
+}
+
+function compactToCorner(
+  initial: CaseInstance,
+  sku: CaseSKU,
+  ctx: ValidatorContext,
+  truck: TruckType,
+  side: 'left' | 'right'
+): CaseInstance {
+  let current = initial;
+  const MAX_ITERS = 6;
+
+  for (let i = 0; i < MAX_ITERS; i++) {
+    const before = current.position;
+    current = minimizeAlongAxis(current, sku, ctx, 'x');
+    current = side === 'left'
+      ? minimizeAlongAxis(current, sku, ctx, 'y')
+      : maximizeAlongAxis(current, sku, ctx, truck, 'y');
+    current = minimizeAlongAxis(current, sku, ctx, 'x');
+
+    if (
+      current.position.x === before.x &&
+      current.position.y === before.y &&
+      current.position.z === before.z
+    ) {
+      break;
+    }
+  }
+
+  return current;
 }
 
 function minimizeAlongAxis(
@@ -394,6 +531,44 @@ function deduplicateInstances(instances: CaseInstance[]): CaseInstance[] {
     seen.add(key);
     return true;
   });
+}
+
+/**
+ * Build deterministic floor anchors from recent placed-box edges.
+ * This guarantees that tight row/column slots are considered even if the
+ * incremental anchor updater missed a cross-combination.
+ */
+function buildFloorExtremeAnchors(
+  placed: CaseInstance[],
+  truck: TruckType
+): Vec3[] {
+  if (placed.length === 0) return [];
+
+  const EDGE_WINDOW = 40;
+  const start = Math.max(0, placed.length - EDGE_WINDOW);
+
+  const xs = new Set<number>([0]);
+  const ys = new Set<number>([0]);
+
+  for (let i = start; i < placed.length; i++) {
+    const p = placed[i];
+    xs.add(Math.round(p.position.x));
+    xs.add(Math.round(p.aabb.max.x));
+    ys.add(Math.round(p.position.y));
+    ys.add(Math.round(p.aabb.max.y));
+  }
+
+  const xVals = Array.from(xs).filter(x => x >= 0 && x < truck.innerDims.x);
+  const yVals = Array.from(ys).filter(y => y >= 0 && y < truck.innerDims.y);
+  const anchors: Vec3[] = [];
+
+  for (const x of xVals) {
+    for (const y of yVals) {
+      anchors.push({ x, y, z: 0 });
+    }
+  }
+
+  return anchors;
 }
 
 /** Add anchor points at truck walls to reduce gaps at boundaries. */
@@ -573,8 +748,7 @@ const TOUCH_DIST = 2;
 function scorePlacement(
   instance: CaseInstance,
   placed: CaseInstance[],
-  truck: TruckType,
-  _skuWeights: Map<string, number>
+  truck: TruckType
 ): number {
   const a = instance.aabb;
 
@@ -593,6 +767,16 @@ function scorePlacement(
   const yCenter = (a.min.y + a.max.y) / 2;
   const truckMidY = truck.innerDims.y / 2;
   const yDeviationPenalty = Math.abs(yCenter - truckMidY) / truck.innerDims.y;
+
+  // Penalize extending the used truck length when existing rows still have room.
+  let currentMaxX = 0;
+  for (const p of placed) {
+    if (p.aabb.max.x > currentMaxX) currentMaxX = p.aabb.max.x;
+  }
+  const nextMaxX = Math.max(currentMaxX, a.max.x);
+  const xGrowthPenalty = placed.length === 0
+    ? nextMaxX / truck.innerDims.x
+    : (nextMaxX - currentMaxX) / truck.innerDims.x;
 
   // Reward tight compaction: count faces touching walls or other placed boxes.
   let touchCount = 0;
@@ -637,6 +821,7 @@ function scorePlacement(
     -heightPenalty * 2.0
     - xForwardBias * 3.0           // strong front-to-back fill
     - yDeviationPenalty * 0.5      // weak L/R centering (adjacency handles wall-hugging)
+    - xGrowthPenalty * 2.5         // avoid opening new rear rows too early
     + adjacencyBonus * 5.0         // dominant tight-packing reward
   );
 }
@@ -682,6 +867,50 @@ function scoreResult(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+function getCurrentMaxX(instances: CaseInstance[]): number {
+  let maxX = 0;
+  for (const inst of instances) {
+    if (inst.aabb.max.x > maxX) maxX = inst.aabb.max.x;
+  }
+  return maxX;
+}
+
+function instancePositionKey(inst: CaseInstance): string {
+  return `${inst.position.x},${inst.position.y},${inst.position.z},${inst.yaw}`;
+}
+
+function projectedFloorVoidRatio(placed: CaseInstance[], candidate: CaseInstance): number {
+  const FLOOR_Z_EPS = 5;
+  if (candidate.position.z > FLOOR_Z_EPS) return 0;
+
+  const floorItems = placed.filter(inst => inst.position.z <= FLOOR_Z_EPS);
+  const all = [...floorItems, candidate];
+  if (all.length <= 1) return 0;
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = 0;
+  let maxY = 0;
+  let occupiedArea = 0;
+
+  for (const inst of all) {
+    const a = inst.aabb;
+    if (a.min.x < minX) minX = a.min.x;
+    if (a.min.y < minY) minY = a.min.y;
+    if (a.max.x > maxX) maxX = a.max.x;
+    if (a.max.y > maxY) maxY = a.max.y;
+    occupiedArea += (a.max.x - a.min.x) * (a.max.y - a.min.y);
+  }
+
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
+  const bboxArea = spanX * spanY;
+  if (bboxArea <= 0) return 0;
+
+  const fillRatio = Math.min(1, occupiedArea / bboxArea);
+  return 1 - fillRatio;
+}
 
 function createEmptyResult(): AutoPackResult {
   return {

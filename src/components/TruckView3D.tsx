@@ -130,6 +130,7 @@ export function TruckView3D({
 }
 
 const SCALE = 0.001;
+const IGNORE_RAYCAST = () => {};
 
 function Scene({ truck, instances, skus, metrics, showSpatialMetrics, itemNumbers, selectedId, onSelect, viewLocked, onMoveInstance, resolveDragPosition, onOpenItemActions, tiltLabel, frontAxleLabel, rearAxleLabel, balanceLabel }: {
   truck: TruckType;
@@ -514,7 +515,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
       rotation={[0, 0, 0]}
       onClick={(e) => {
         e.stopPropagation();
-        if (!moved.current) onToggleSelect();
+        if (!viewLocked && !moved.current) onToggleSelect();
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -530,31 +531,32 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
     >
       <boxGeometry args={size} />
       <meshStandardMaterial color={color} transparent={false} opacity={1} emissive={isSelected ? '#22c55e' : '#000000'} emissiveIntensity={isSelected ? 0.25 : 0} />
-      <lineSegments>
+      <lineSegments raycast={IGNORE_RAYCAST}>
         <edgesGeometry args={[caseGeometry]} />
         <lineBasicMaterial color="#020617" linewidth={2} />
       </lineSegments>
 
-      <Text position={[0, size[1] / 2 + 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={textSize} maxWidth={size[0] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
-      <Text position={[0, size[1] / 2 + 0.005, numberTopOffsetZ]} rotation={[-Math.PI / 2, 0, 0]} fontSize={numberTextSize} maxWidth={size[0] * 0.5} color="#fde047" anchorX="center" anchorY="middle" textAlign="center">{numberLabel}</Text>
-      {isTilted && <Text position={[0, size[1] / 2 + 0.005, topTiltOffsetZ]} rotation={[-Math.PI / 2, 0, 0]} fontSize={tiltTextSize} maxWidth={size[0] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
+      {/* Keep label meshes non-interactive so hit testing follows the case box. */}
+      <Text raycast={IGNORE_RAYCAST} position={[0, size[1] / 2 + 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={textSize} maxWidth={size[0] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
+      <Text raycast={IGNORE_RAYCAST} position={[0, size[1] / 2 + 0.005, numberTopOffsetZ]} rotation={[-Math.PI / 2, 0, 0]} fontSize={numberTextSize} maxWidth={size[0] * 0.5} color="#fde047" anchorX="center" anchorY="middle" textAlign="center">{numberLabel}</Text>
+      {isTilted && <Text raycast={IGNORE_RAYCAST} position={[0, size[1] / 2 + 0.005, topTiltOffsetZ]} rotation={[-Math.PI / 2, 0, 0]} fontSize={tiltTextSize} maxWidth={size[0] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
 
-      <Text position={[0, 0, size[2] / 2 + 0.005]} fontSize={textSize} maxWidth={size[0] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
-      <Text position={[0, numberSideOffsetY, size[2] / 2 + 0.005]} fontSize={numberTextSize} maxWidth={size[0] * 0.5} color="#fde047" anchorX="center" anchorY="middle" textAlign="center">{numberLabel}</Text>
-      {isTilted && <Text position={[0, sideTiltOffsetY, size[2] / 2 + 0.005]} fontSize={tiltTextSize} maxWidth={size[0] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
+      <Text raycast={IGNORE_RAYCAST} position={[0, 0, size[2] / 2 + 0.005]} fontSize={textSize} maxWidth={size[0] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
+      <Text raycast={IGNORE_RAYCAST} position={[0, numberSideOffsetY, size[2] / 2 + 0.005]} fontSize={numberTextSize} maxWidth={size[0] * 0.5} color="#fde047" anchorX="center" anchorY="middle" textAlign="center">{numberLabel}</Text>
+      {isTilted && <Text raycast={IGNORE_RAYCAST} position={[0, sideTiltOffsetY, size[2] / 2 + 0.005]} fontSize={tiltTextSize} maxWidth={size[0] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
 
-      <Text position={[0, 0, -size[2] / 2 - 0.005]} rotation={[0, Math.PI, 0]} fontSize={textSize} maxWidth={size[0] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
-      <Text position={[0, numberSideOffsetY, -size[2] / 2 - 0.005]} rotation={[0, Math.PI, 0]} fontSize={numberTextSize} maxWidth={size[0] * 0.5} color="#fde047" anchorX="center" anchorY="middle" textAlign="center">{numberLabel}</Text>
-      {isTilted && <Text position={[0, sideTiltOffsetY, -size[2] / 2 - 0.005]} rotation={[0, Math.PI, 0]} fontSize={tiltTextSize} maxWidth={size[0] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
+      <Text raycast={IGNORE_RAYCAST} position={[0, 0, -size[2] / 2 - 0.005]} rotation={[0, Math.PI, 0]} fontSize={textSize} maxWidth={size[0] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
+      <Text raycast={IGNORE_RAYCAST} position={[0, numberSideOffsetY, -size[2] / 2 - 0.005]} rotation={[0, Math.PI, 0]} fontSize={numberTextSize} maxWidth={size[0] * 0.5} color="#fde047" anchorX="center" anchorY="middle" textAlign="center">{numberLabel}</Text>
+      {isTilted && <Text raycast={IGNORE_RAYCAST} position={[0, sideTiltOffsetY, -size[2] / 2 - 0.005]} rotation={[0, Math.PI, 0]} fontSize={tiltTextSize} maxWidth={size[0] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
 
-      <Text position={[size[0] / 2 + 0.005, 0, 0]} rotation={[0, Math.PI / 2, 0]} fontSize={textSize} maxWidth={size[2] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
-      {isTilted && <Text position={[size[0] / 2 + 0.005, sideTiltOffsetY, 0]} rotation={[0, Math.PI / 2, 0]} fontSize={tiltTextSize} maxWidth={size[2] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
+      <Text raycast={IGNORE_RAYCAST} position={[size[0] / 2 + 0.005, 0, 0]} rotation={[0, Math.PI / 2, 0]} fontSize={textSize} maxWidth={size[2] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
+      {isTilted && <Text raycast={IGNORE_RAYCAST} position={[size[0] / 2 + 0.005, sideTiltOffsetY, 0]} rotation={[0, Math.PI / 2, 0]} fontSize={tiltTextSize} maxWidth={size[2] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
 
-      <Text position={[-size[0] / 2 - 0.005, 0, 0]} rotation={[0, -Math.PI / 2, 0]} fontSize={textSize} maxWidth={size[2] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
-      {isTilted && <Text position={[-size[0] / 2 - 0.005, sideTiltOffsetY, 0]} rotation={[0, -Math.PI / 2, 0]} fontSize={tiltTextSize} maxWidth={size[2] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
+      <Text raycast={IGNORE_RAYCAST} position={[-size[0] / 2 - 0.005, 0, 0]} rotation={[0, -Math.PI / 2, 0]} fontSize={textSize} maxWidth={size[2] * 0.9} color="#f8fafc" anchorX="center" anchorY="middle" textAlign="center">{faceLabel}</Text>
+      {isTilted && <Text raycast={IGNORE_RAYCAST} position={[-size[0] / 2 - 0.005, sideTiltOffsetY, 0]} rotation={[0, -Math.PI / 2, 0]} fontSize={tiltTextSize} maxWidth={size[2] * 0.8} color="#fbbf24" anchorX="center" anchorY="middle" textAlign="center">{tiltLabel}</Text>}
 
       {isSelected && (
-        <lineSegments>
+        <lineSegments raycast={IGNORE_RAYCAST}>
           <edgesGeometry args={[caseGeometry]} />
           <lineBasicMaterial color="#22c55e" linewidth={2} />
         </lineSegments>

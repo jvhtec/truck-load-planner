@@ -181,11 +181,74 @@ interface CreateCaseInput {
 }
 
 const AUTOPLACE_STEP_MM = 100;
+const AUTOPLACE_COMPACTION_STEPS = [100, 20, 5, 1];
 
 function normalizeTilt(input?: { x?: number; y?: number } | null): { y: 0 | 90 } {
   const y = input?.y === 90 ? 90 : 0;
   if (y === 90) return { y: 90 };
   return { y: 0 };
+}
+
+function buildScanValues(maxCoord: number): number[] {
+  const values: number[] = [];
+  for (let v = 0; v <= maxCoord; v += AUTOPLACE_STEP_MM) {
+    values.push(v);
+  }
+  if (values.length === 0 || values[values.length - 1] !== maxCoord) {
+    values.push(maxCoord);
+  }
+  return values;
+}
+
+function compactAutoPlacedCandidate(
+  initial: CaseInstance,
+  sku: CaseSKU,
+  validator: (candidate: CaseInstance) => boolean
+): CaseInstance {
+  let current = initial;
+
+  const compactMin = (axis: 'x' | 'y') => {
+    for (const step of AUTOPLACE_COMPACTION_STEPS) {
+      let moved = true;
+      while (moved) {
+        const nextCoord = current.position[axis] - step;
+        if (nextCoord < 0) {
+          moved = false;
+          continue;
+        }
+
+        const nextPos = { ...current.position, [axis]: nextCoord };
+        const next: CaseInstance = {
+          ...current,
+          position: nextPos,
+          aabb: computeOrientedAABB(sku, nextPos, current.yaw, normalizeTilt(current.tilt)),
+        };
+        if (validator(next)) {
+          current = next;
+        } else {
+          moved = false;
+        }
+      }
+    }
+  };
+
+  const MAX_PASSES = 4;
+  for (let i = 0; i < MAX_PASSES; i++) {
+    const before = current.position;
+    compactMin('x');
+    compactMin('y');
+    compactMin('x');
+
+    if (
+      current.position.x === before.x &&
+      current.position.y === before.y &&
+      current.position.z === before.z
+    ) {
+      break;
+    }
+  }
+
+  return current;
 }
 
 export interface PlannerActions {
@@ -495,6 +558,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
     setState(prev => {
       if (!prev.truck || instanceIds.length === 0) return prev;
+      const truck = prev.truck;
 
       const ids = new Set(instanceIds);
       const stagedToPlace = prev.instances.filter(i => i.staged && ids.has(i.id));
@@ -519,28 +583,31 @@ export function usePlanner(): [PlannerState, PlannerActions] {
 
         for (const z of zLevels) {
           if (placedCandidate) break;
-          const maxX = Math.max(0, prev.truck.innerDims.x - (staged.aabb.max.x - staged.aabb.min.x));
-          const maxY = Math.max(0, prev.truck.innerDims.y - (staged.aabb.max.y - staged.aabb.min.y));
-          for (let x = 0; x <= maxX; x += AUTOPLACE_STEP_MM) {
+          const maxX = Math.max(0, truck.innerDims.x - (staged.aabb.max.x - staged.aabb.min.x));
+          const maxY = Math.max(0, truck.innerDims.y - (staged.aabb.max.y - staged.aabb.min.y));
+          const xValues = buildScanValues(maxX);
+          const yValues = buildScanValues(maxY);
+          const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedNow, prev.skus);
+          const isValid = (candidate: CaseInstance) => validatePlacement(candidate, {
+            truck,
+            skus: prev.skus,
+            instances: placedNow,
+            supportGraph,
+            skuWeights,
+            spatialIndex,
+          }).valid;
+
+          for (const x of xValues) {
             if (placedCandidate) break;
-            for (let y = 0; y <= maxY; y += AUTOPLACE_STEP_MM) {
+            for (const y of yValues) {
               const candidate: CaseInstance = {
                 ...staged,
                 position: { x, y, z },
                 aabb: computeOrientedAABB(sku, { x, y, z }, staged.yaw, normalizeTilt(staged.tilt)),
                 staged: false,
               };
-              const { supportGraph, spatialIndex, skuWeights } = buildValidationContext(placedNow, prev.skus);
-              const validation = validatePlacement(candidate, {
-                truck: prev.truck,
-                skus: prev.skus,
-                instances: placedNow,
-                supportGraph,
-                skuWeights,
-                spatialIndex,
-              });
-              if (validation.valid) {
-                placedCandidate = candidate;
+              if (isValid(candidate)) {
+                placedCandidate = compactAutoPlacedCandidate(candidate, sku, isValid);
                 break;
               }
             }

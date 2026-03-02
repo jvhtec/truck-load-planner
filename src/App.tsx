@@ -1012,6 +1012,12 @@ function App() {
   };
 
   const handleAutoLoadAction = () => {
+    if (hasAutoLoadQuantities) {
+      actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
+      setSelectedStagedIds([]);
+      return;
+    }
+
     const stagedIds = state.instances.filter(i => i.staged).map(i => i.id);
     if (stagedIds.length > 0) {
       const res = actions.autoPlaceInstances(stagedIds);
@@ -1019,8 +1025,6 @@ function App() {
       setSelectedStagedIds([]);
       return;
     }
-    if (!hasAutoLoadQuantities) return;
-    actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
   };
 
   return (

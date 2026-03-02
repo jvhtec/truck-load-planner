@@ -53,6 +53,28 @@ const axleConstrainedCase: CaseSKU = {
   weightKg: 80,
 };
 
+const wideTrailerTruck: TruckType = {
+  truckId: 'TRAILER',
+  name: 'Wide Trailer',
+  innerDims: { x: 13600, y: 2480, z: 2700 },
+  emptyWeightKg: 6900,
+  axle: { frontX: 2000, rearX: 5700, maxFrontKg: 50000, maxRearKg: 50000 },
+  balance: { maxLeftRightPercentDiff: 100 },
+};
+
+const tallChariotCase: CaseSKU = {
+  skuId: 'K1',
+  name: '4xK1',
+  dims: { l: 1450, w: 610, h: 2032 },
+  weightKg: 471,
+  uprightOnly: true,
+  allowedYaw: [0, 90, 180, 270],
+  canBeBase: true,
+  topContactAllowed: true,
+  maxLoadAboveKg: 100,
+  minSupportRatio: 0.75,
+};
+
 describe('autoPack', () => {
   it('returns empty result for zero quantities', () => {
     const result = autoPack(truck, [stdCase], new Map([['STD', 0]]));
@@ -84,6 +106,15 @@ describe('autoPack', () => {
         expect(overlaps).toBe(false);
       }
     }
+  });
+
+  it('keeps placements on floor while floor space exists for the SKU', () => {
+    const qty = 8;
+    const result = autoPack(truck, [stdCase], new Map([['STD', qty]]), { maxAttempts: 1 });
+
+    expect(result.placed).toHaveLength(qty);
+    const elevated = result.placed.filter(inst => inst.position.z > 0);
+    expect(elevated).toHaveLength(0);
   });
 
   it('all placed instances are within truck bounds', () => {
@@ -166,6 +197,24 @@ describe('autoPack', () => {
     expect(result.placed).toHaveLength(1);
     expect(result.unplaced).toHaveLength(1);
     expect(result.reasonSummary.AXLE_FRONT_OVER ?? 0).toBeGreaterThan(0);
+  });
+
+  it('packs tall 4xK1 cases with width-efficient yaw to avoid long void channels', () => {
+    const qty = 16;
+    const result = autoPack(
+      wideTrailerTruck,
+      [tallChariotCase],
+      new Map([[tallChariotCase.skuId, qty]]),
+      { maxAttempts: 5, randomSeed: 3 }
+    );
+
+    expect(result.placed).toHaveLength(qty);
+    expect(result.unplaced).toHaveLength(0);
+
+    const maxExtentX = result.placed.reduce((maxX, inst) => Math.max(maxX, inst.aabb.max.x), 0);
+    // 16 items with 1450mm depth and 4 columns should use ~5800mm length.
+    // Allow slack for tie-breaks and tolerance, but block the previous >8m channel layout.
+    expect(maxExtentX).toBeLessThanOrEqual(6200);
   });
 
   it('stress: packs 20 standard cases', () => {
