@@ -34,6 +34,14 @@ function normalizeTilt(input?: { y?: number } | null): { y: 0 | 90 } {
   return input?.y === 90 ? { y: 90 } : { y: 0 };
 }
 
+function getErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  return 'Unexpected error';
+}
+
 function buildItemNumberMap(instances: CaseInstance[]): Map<string, number> {
   const sorted = [...instances].sort((a, b) => {
     const ax = bucket(centerX(a));
@@ -1483,15 +1491,21 @@ function App() {
             <div className="dialog-actions">
               <button onClick={() => setShowNewTruck(false)}>{t.cancel}</button>
               <button className="primary" onClick={async () => {
-                await actions.createTruck({
-                  truckId: truckForm.truckId,
-                  name: truckForm.name,
-                  innerDims: { x: truckForm.x, y: truckForm.y, z: truckForm.z },
-                  emptyWeightKg: truckForm.emptyWeightKg,
-                  axle: { frontX: truckForm.frontX, rearX: truckForm.rearX, maxFrontKg: truckForm.maxFrontKg, maxRearKg: truckForm.maxRearKg },
-                  maxLeftRightPercentDiff: truckForm.maxLr,
-                });
-                setShowNewTruck(false);
+                try {
+                  await actions.createTruck({
+                    truckId: truckForm.truckId,
+                    name: truckForm.name,
+                    innerDims: { x: truckForm.x, y: truckForm.y, z: truckForm.z },
+                    emptyWeightKg: truckForm.emptyWeightKg,
+                    axle: { frontX: truckForm.frontX, rearX: truckForm.rearX, maxFrontKg: truckForm.maxFrontKg, maxRearKg: truckForm.maxRearKg },
+                    maxLeftRightPercentDiff: truckForm.maxLr,
+                  });
+                  setShowNewTruck(false);
+                } catch (error) {
+                  pushToast(lang === 'es'
+                    ? `No se pudo crear el camion: ${getErrorMessage(error)}`
+                    : `Could not create truck: ${getErrorMessage(error)}`);
+                }
               }}>{t.create}</button>
             </div>
           </div>
