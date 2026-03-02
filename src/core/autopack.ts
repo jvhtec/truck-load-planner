@@ -328,6 +328,21 @@ function updateAnchors(
     newAnchors.push({ x: maxX, y: oMaxY, z: minZ });
     // Project other box's X-edge against placed box's Y-edge (floor level)
     newAnchors.push({ x: oMaxX, y: maxY, z: minZ });
+
+    // Cross-projections at stacking level — fills recesses on upper layers
+    if (sku.canBeBase) {
+      newAnchors.push({ x: maxX, y: oMaxY, z: topZVal });
+      newAnchors.push({ x: oMaxX, y: maxY, z: topZVal });
+    }
+    const oTopZ = topZ(other.aabb);
+    if (oTopZ > 0) {
+      newAnchors.push({ x: maxX, y: oMaxY, z: oTopZ });
+      newAnchors.push({ x: oMaxX, y: maxY, z: oTopZ });
+    }
+
+    // Wall-edge projections: fill gaps by projecting edges back to walls
+    newAnchors.push({ x: oMaxX, y: 0, z: minZ });
+    newAnchors.push({ x: maxX, y: 0, z: minZ });
   }
 
   return deduplicateAnchors(newAnchors);
@@ -371,20 +386,20 @@ function scorePlacement(
   // Prefer lower height (pack from floor up)
   const heightPenalty = a.min.z / truck.innerDims.z;
 
-  // Prefer placing toward axle midpoint
-  const xCenter = (a.min.x + a.max.x) / 2;
-  const axleMidX = (truck.axle.frontX + truck.axle.rearX) / 2;
-  const axleProximity = Math.abs(xCenter - axleMidX) / truck.innerDims.x;
+  // Pack front-to-back: reward placing closer to the front of the truck.
+  // The old axle-proximity metric pulled items toward the truck center,
+  // which split cargo into two groups with a gap in between.  Axle limits
+  // are already enforced by validation, so let the scoring just drive
+  // compact front-to-back filling.
+  const xForwardBias = (a.min.x + a.max.x) / 2 / truck.innerDims.x;
 
-  // Prefer placing toward Y center (minimize L/R imbalance)
+  // Weak Y-center preference — just enough to break ties in favour of
+  // balanced loads, but not strong enough to override wall-adjacency.
   const yCenter = (a.min.y + a.max.y) / 2;
   const truckMidY = truck.innerDims.y / 2;
   const yDeviationPenalty = Math.abs(yCenter - truckMidY) / truck.innerDims.y;
 
   // Reward tight compaction: count faces touching walls or other placed boxes.
-  // This directly incentivises gap-free packing rather than the former approach
-  // which proxied compactness via axle-balance ratio (and could penalise valid
-  // wall-hugging positions).
   let touchCount = 0;
 
   // Wall / floor adjacency
@@ -393,32 +408,39 @@ function scorePlacement(
   if (a.min.y <= TOUCH_DIST) touchCount += 1; // left wall
   if (a.max.y >= truck.innerDims.y - TOUCH_DIST) touchCount += 1; // right wall
 
-  // Box-to-box face adjacency
+  // Box-to-box face adjacency (X, Y, and Z axes)
   for (const p of placed) {
     const b = p.aabb;
     const yOverlap = a.min.y < b.max.y - TOUCH_DIST && a.max.y > b.min.y + TOUCH_DIST;
     const xOverlap = a.min.x < b.max.x - TOUCH_DIST && a.max.x > b.min.x + TOUCH_DIST;
     const zOverlap = a.min.z < b.max.z - TOUCH_DIST && a.max.z > b.min.z + TOUCH_DIST;
 
+    // X-axis faces (front/rear)
     if (zOverlap && yOverlap) {
       if (Math.abs(a.min.x - b.max.x) <= TOUCH_DIST) touchCount++;
       if (Math.abs(a.max.x - b.min.x) <= TOUCH_DIST) touchCount++;
     }
+    // Y-axis faces (left/right)
     if (zOverlap && xOverlap) {
       if (Math.abs(a.min.y - b.max.y) <= TOUCH_DIST) touchCount++;
       if (Math.abs(a.max.y - b.min.y) <= TOUCH_DIST) touchCount++;
     }
+    // Z-axis faces (top/bottom stacking contact)
+    if (xOverlap && yOverlap) {
+      if (Math.abs(a.min.z - b.max.z) <= TOUCH_DIST) touchCount++;
+      if (Math.abs(a.max.z - b.min.z) <= TOUCH_DIST) touchCount++;
+    }
   }
 
-  // Normalise to [0, 1]: max realistic touches = floor(2) + front(1) + side(1) + 2 box faces = 6
-  const adjacencyBonus = Math.min(touchCount, 6) / 6;
+  // Normalise to [0, 1]: max realistic touches ≈ floor(2) + front(1) + side(1) + 3 box faces + 1 z-face = 8
+  const adjacencyBonus = Math.min(touchCount, 8) / 8;
 
   // Combined score (higher = better placement)
   return (
     -heightPenalty * 2.0
-    - axleProximity * 1.0
-    - yDeviationPenalty * 1.5
-    + adjacencyBonus * 3.0  // raised weight: tight packing is the primary spatial goal
+    - xForwardBias * 3.0           // strong front-to-back fill
+    - yDeviationPenalty * 0.5      // weak L/R centering (adjacency handles wall-hugging)
+    + adjacencyBonus * 5.0         // dominant tight-packing reward
   );
 }
 
@@ -443,6 +465,16 @@ function scoreResult(
 
   // Penalize L/R imbalance
   score -= result.metrics.lrImbalancePercent * weights.lrBalance;
+
+  // Reward compactness: prefer solutions where cargo uses less truck length.
+  // Lower max-X extent → tighter, more consolidated pack.
+  if (result.placed.length > 0) {
+    let maxExtentX = 0;
+    for (const inst of result.placed) {
+      if (inst.aabb.max.x > maxExtentX) maxExtentX = inst.aabb.max.x;
+    }
+    score -= (maxExtentX / truck.innerDims.x) * 150;
+  }
 
   // Reward compactness (fewer unplaced = better, already captured in placed count)
   score -= result.unplaced.length * 500;
