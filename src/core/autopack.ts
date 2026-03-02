@@ -14,7 +14,7 @@ import { createInstance, topZ } from './geometry';
 import { validatePlacement, ValidatorContext } from './validate';
 import { SupportGraph } from './support';
 import { SpatialIndex } from './spatial';
-import { computeMetrics, computeAxleLoads, computeCOM } from './weight';
+import { computeMetrics } from './weight';
 
 // ============================================================================
 // Auto-Pack Configuration
@@ -165,7 +165,9 @@ function attemptPlacement(
       spatialIndex.add(bestPlacement.instance.id, bestPlacement.instance.aabb);
 
       // Expand anchor set with positions adjacent to this placement
-      anchors = updateAnchors(anchors, bestPlacement.instance, sku);
+      anchors = updateAnchors(anchors, bestPlacement.instance, sku, placed);
+      // Remove anchors that now fall strictly inside the placed box
+      anchors = pruneAnchors(anchors, bestPlacement.instance);
     } else {
       unplaced.push(pc.skuId);
       // Tally the most common rejection reason for this case
@@ -280,28 +282,52 @@ interface Vec3 { x: number; y: number; z: number }
 function updateAnchors(
   current: Vec3[],
   placed: CaseInstance,
-  sku: CaseSKU
+  sku: CaseSKU,
+  allPlaced: CaseInstance[]
 ): Vec3[] {
   const newAnchors: Vec3[] = [...current];
 
+  const minX = placed.position.x;
+  const minY = placed.position.y;
+  const minZ = placed.position.z;
   const maxX = placed.aabb.max.x;
   const maxY = placed.aabb.max.y;
   const topZVal = topZ(placed.aabb);
 
   // Adjacent to right side (same row, next column)
-  newAnchors.push({ x: placed.position.x, y: maxY, z: placed.position.z });
+  newAnchors.push({ x: minX, y: maxY, z: minZ });
 
   // Adjacent behind (next row along length)
-  newAnchors.push({ x: maxX, y: placed.position.y, z: placed.position.z });
+  newAnchors.push({ x: maxX, y: minY, z: minZ });
 
   // Corner diagonal (next row + next column)
-  newAnchors.push({ x: maxX, y: maxY, z: placed.position.z });
+  newAnchors.push({ x: maxX, y: maxY, z: minZ });
 
   // On top (if this case can be used as a base)
   if (sku.canBeBase) {
-    newAnchors.push({ x: placed.position.x, y: placed.position.y, z: topZVal });
-    newAnchors.push({ x: placed.position.x, y: maxY, z: topZVal });
-    newAnchors.push({ x: maxX, y: placed.position.y, z: topZVal });
+    newAnchors.push({ x: minX, y: minY, z: topZVal });
+    newAnchors.push({ x: minX, y: maxY, z: topZVal });
+    newAnchors.push({ x: maxX, y: minY, z: topZVal });
+    // Diagonal stacking corner (previously missing)
+    newAnchors.push({ x: maxX, y: maxY, z: topZVal });
+  }
+
+  // Extreme-point cross-projections: combine this box's new edges with the
+  // edges of recently placed boxes.  This generates anchors inside concave
+  // spaces that the simple adjacent-only method cannot reach.
+  // Example: two boxes in a row with different lengths leave a recess that
+  // only a (maxX_other, maxY_new, z) anchor can address.
+  const CROSS_WINDOW = 20; // only look at the most recent boxes to stay O(1) average
+  const recentStart = Math.max(0, allPlaced.length - CROSS_WINDOW);
+  for (let i = recentStart; i < allPlaced.length; i++) {
+    const other = allPlaced[i];
+    if (other.id === placed.id) continue;
+    const oMaxX = other.aabb.max.x;
+    const oMaxY = other.aabb.max.y;
+    // Project placed box's X-edge against other box's Y-edge (floor level)
+    newAnchors.push({ x: maxX, y: oMaxY, z: minZ });
+    // Project other box's X-edge against placed box's Y-edge (floor level)
+    newAnchors.push({ x: oMaxX, y: maxY, z: minZ });
   }
 
   return deduplicateAnchors(newAnchors);
@@ -317,50 +343,82 @@ function deduplicateAnchors(anchors: Vec3[]): Vec3[] {
   });
 }
 
+/** Remove anchors that fall strictly inside a placed box (they will always collide). */
+function pruneAnchors(anchors: Vec3[], justPlaced: CaseInstance): Vec3[] {
+  const { min, max } = justPlaced.aabb;
+  return anchors.filter(a =>
+    !(a.x > min.x && a.x < max.x &&
+      a.y > min.y && a.y < max.y &&
+      a.z > min.z && a.z < max.z)
+  );
+}
+
 // ============================================================================
 // Placement Scoring
 // ============================================================================
+
+/** Distance (mm) within which two surfaces are considered "touching". */
+const TOUCH_DIST = 2;
 
 function scorePlacement(
   instance: CaseInstance,
   placed: CaseInstance[],
   truck: TruckType,
-  skuWeights: Map<string, number>
+  _skuWeights: Map<string, number>
 ): number {
-  // Prefer lower height (pack from floor up)
-  const heightPenalty = instance.aabb.min.z / truck.innerDims.z;
+  const a = instance.aabb;
 
-  // Prefer placing toward front axle (front-heavy is usually better for smaller trucks)
-  const xCenter = (instance.aabb.min.x + instance.aabb.max.x) / 2;
+  // Prefer lower height (pack from floor up)
+  const heightPenalty = a.min.z / truck.innerDims.z;
+
+  // Prefer placing toward axle midpoint
+  const xCenter = (a.min.x + a.max.x) / 2;
   const axleMidX = (truck.axle.frontX + truck.axle.rearX) / 2;
   const axleProximity = Math.abs(xCenter - axleMidX) / truck.innerDims.x;
 
   // Prefer placing toward Y center (minimize L/R imbalance)
-  const yCenter = (instance.aabb.min.y + instance.aabb.max.y) / 2;
+  const yCenter = (a.min.y + a.max.y) / 2;
   const truckMidY = truck.innerDims.y / 2;
   const yDeviationPenalty = Math.abs(yCenter - truckMidY) / truck.innerDims.y;
 
-  // Prefer tight compaction: reward when box touches existing boxes
-  let adjacencyBonus = 0;
-  if (placed.length > 0) {
-    const allWithCandidate = [...placed, instance];
-    const totalW = allWithCandidate.reduce((s, i) => s + (skuWeights.get(i.skuId) || 0), 0);
-    if (totalW > 0) {
-      const com = computeCOM(allWithCandidate, skuWeights);
-      const { frontKg, rearKg } = computeAxleLoads(totalW, com.x, truck);
-      const axleRatio = truck.axle.maxFrontKg + truck.axle.maxRearKg > 0
-        ? Math.abs(frontKg / truck.axle.maxFrontKg - rearKg / truck.axle.maxRearKg)
-        : 0;
-      adjacencyBonus = -axleRatio; // negative because lower is better
+  // Reward tight compaction: count faces touching walls or other placed boxes.
+  // This directly incentivises gap-free packing rather than the former approach
+  // which proxied compactness via axle-balance ratio (and could penalise valid
+  // wall-hugging positions).
+  let touchCount = 0;
+
+  // Wall / floor adjacency
+  if (a.min.z <= TOUCH_DIST) touchCount += 2; // floor is the most important surface
+  if (a.min.x <= TOUCH_DIST) touchCount += 1; // front wall
+  if (a.min.y <= TOUCH_DIST) touchCount += 1; // left wall
+  if (a.max.y >= truck.innerDims.y - TOUCH_DIST) touchCount += 1; // right wall
+
+  // Box-to-box face adjacency
+  for (const p of placed) {
+    const b = p.aabb;
+    const yOverlap = a.min.y < b.max.y - TOUCH_DIST && a.max.y > b.min.y + TOUCH_DIST;
+    const xOverlap = a.min.x < b.max.x - TOUCH_DIST && a.max.x > b.min.x + TOUCH_DIST;
+    const zOverlap = a.min.z < b.max.z - TOUCH_DIST && a.max.z > b.min.z + TOUCH_DIST;
+
+    if (zOverlap && yOverlap) {
+      if (Math.abs(a.min.x - b.max.x) <= TOUCH_DIST) touchCount++;
+      if (Math.abs(a.max.x - b.min.x) <= TOUCH_DIST) touchCount++;
+    }
+    if (zOverlap && xOverlap) {
+      if (Math.abs(a.min.y - b.max.y) <= TOUCH_DIST) touchCount++;
+      if (Math.abs(a.max.y - b.min.y) <= TOUCH_DIST) touchCount++;
     }
   }
+
+  // Normalise to [0, 1]: max realistic touches = floor(2) + front(1) + side(1) + 2 box faces = 6
+  const adjacencyBonus = Math.min(touchCount, 6) / 6;
 
   // Combined score (higher = better placement)
   return (
     -heightPenalty * 2.0
     - axleProximity * 1.0
     - yDeviationPenalty * 1.5
-    + adjacencyBonus * 2.0
+    + adjacencyBonus * 3.0  // raised weight: tight packing is the primary spatial goal
   );
 }
 

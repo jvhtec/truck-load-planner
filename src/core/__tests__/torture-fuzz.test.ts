@@ -266,7 +266,7 @@ function runCsvRoundTripFlow(
 function attemptMoveBaseSlightly(
   rng: Rng,
   instances: CaseInstance[],
-  truck: TruckType,
+  _truck: TruckType,
   skuMap: Map<string, CaseSKU>,
 ): CaseInstance[] {
   if (instances.length === 0) return instances;
