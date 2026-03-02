@@ -113,6 +113,10 @@ function attemptPlacement(
   // Candidate anchor points — start from front-left-floor corner
   let anchors: Vec3[] = [{ x: 0, y: 0, z: 0 }];
 
+  // Inject wall-edge anchors at the start and periodically to ensure
+  // the algorithm explores positions against all truck boundaries.
+  anchors = addWallAnchors(anchors, truck);
+
   // Shuffle cases within same priority tier for multi-start diversity
   const shuffled = shuffleWithinTiers(casesToPlace, attemptNumber);
 
@@ -165,9 +169,13 @@ function attemptPlacement(
       spatialIndex.add(bestPlacement.instance.id, bestPlacement.instance.aabb);
 
       // Expand anchor set with positions adjacent to this placement
-      anchors = updateAnchors(anchors, bestPlacement.instance, sku, placed);
+      anchors = updateAnchors(anchors, bestPlacement.instance, sku, placed, truck);
       // Remove anchors that now fall strictly inside the placed box
       anchors = pruneAnchors(anchors, bestPlacement.instance);
+      // Periodically re-inject wall anchors to reduce gaps as we fill the truck
+      if (placed.length % 3 === 0) {
+        anchors = addWallAnchors(anchors, truck);
+      }
     } else {
       unplaced.push(pc.skuId);
       // Tally the most common rejection reason for this case
@@ -279,13 +287,42 @@ function sameTier(a: PlacementCase, b: PlacementCase): boolean {
 
 interface Vec3 { x: number; y: number; z: number }
 
+/** Add anchor points at truck walls to reduce gaps at boundaries. */
+function addWallAnchors(current: Vec3[], truck: TruckType): Vec3[] {
+  const newAnchors: Vec3[] = [...current];
+  const inner = truck.innerDims;
+
+  // Front wall (x = 0) - already covered by initial anchor
+  // Left wall (y = 0) - already covered by initial anchor
+  // Floor (z = 0) - already covered by initial anchor
+
+  // Right wall anchors (reduce horizontal gaps between cases and right wall)
+  newAnchors.push({ x: 0, y: inner.y, z: 0 });        // front-right-floor
+  newAnchors.push({ x: inner.x, y: 0, z: 0 });        // rear-left-floor
+  newAnchors.push({ x: inner.x, y: inner.y, z: 0 });  // rear-right-floor
+
+  // Rear wall anchors (reduce gaps at back of truck)
+  newAnchors.push({ x: inner.x, y: 0, z: 0 });
+  newAnchors.push({ x: inner.x, y: inner.y, z: 0 });
+
+  // Ceiling anchors (reduce vertical gaps at top of truck)
+  newAnchors.push({ x: 0, y: 0, z: inner.z });
+  newAnchors.push({ x: 0, y: inner.y, z: inner.z });
+  newAnchors.push({ x: inner.x, y: 0, z: inner.z });
+  newAnchors.push({ x: inner.x, y: inner.y, z: inner.z });
+
+  return deduplicateAnchors(newAnchors);
+}
+
 function updateAnchors(
   current: Vec3[],
   placed: CaseInstance,
   sku: CaseSKU,
-  allPlaced: CaseInstance[]
+  allPlaced: CaseInstance[],
+  truck: TruckType
 ): Vec3[] {
   const newAnchors: Vec3[] = [...current];
+  const inner = truck.innerDims;
 
   const minX = placed.position.x;
   const minY = placed.position.y;
@@ -310,6 +347,36 @@ function updateAnchors(
     newAnchors.push({ x: maxX, y: minY, z: topZVal });
     // Diagonal stacking corner (previously missing)
     newAnchors.push({ x: maxX, y: maxY, z: topZVal });
+  }
+
+  // Vertical gap reduction: anchor at ceiling when there's vertical headroom
+  if (topZVal < inner.z - 50) {
+    newAnchors.push({ x: minX, y: minY, z: inner.z });
+    newAnchors.push({ x: maxX, y: minY, z: inner.z });
+    if (sku.canBeBase) {
+      newAnchors.push({ x: minX, y: maxY, z: inner.z });
+      newAnchors.push({ x: maxX, y: maxY, z: inner.z });
+    }
+  }
+
+  // Horizontal gap reduction: anchor at right wall when there's Y headroom
+  if (maxY < inner.y - 50) {
+    newAnchors.push({ x: minX, y: inner.y, z: minZ });
+    newAnchors.push({ x: maxX, y: inner.y, z: minZ });
+    if (sku.canBeBase) {
+      newAnchors.push({ x: minX, y: inner.y, z: topZVal });
+      newAnchors.push({ x: maxX, y: inner.y, z: topZVal });
+    }
+  }
+
+  // Back-of-truck gap reduction: anchor at rear wall when there's X headroom
+  if (maxX < inner.x - 50) {
+    newAnchors.push({ x: inner.x, y: minY, z: minZ });
+    newAnchors.push({ x: inner.x, y: maxY, z: minZ });
+    if (sku.canBeBase) {
+      newAnchors.push({ x: inner.x, y: minY, z: topZVal });
+      newAnchors.push({ x: inner.x, y: maxY, z: topZVal });
+    }
   }
 
   // Extreme-point cross-projections: combine this box's new edges with the
@@ -343,6 +410,25 @@ function updateAnchors(
     // Wall-edge projections: fill gaps by projecting edges back to walls
     newAnchors.push({ x: oMaxX, y: 0, z: minZ });
     newAnchors.push({ x: maxX, y: 0, z: minZ });
+  }
+
+  // Multi-layer vertical anchors: add intermediate Z levels to reduce vertical gaps.
+  // When there's significant vertical space, generate anchors at intermediate heights.
+  if (sku.canBeBase && topZVal > 0 && topZVal < inner.z - 100) {
+    // Add anchors at 25%, 50%, and 75% of remaining vertical space
+    const remaining = inner.z - topZVal;
+    if (remaining > 300) {
+      const layer1 = topZVal + Math.floor(remaining * 0.25);
+      const layer2 = topZVal + Math.floor(remaining * 0.5);
+      newAnchors.push({ x: minX, y: minY, z: layer1 });
+      newAnchors.push({ x: maxX, y: minY, z: layer1 });
+      newAnchors.push({ x: minX, y: maxY, z: layer1 });
+      newAnchors.push({ x: maxX, y: maxY, z: layer1 });
+      newAnchors.push({ x: minX, y: minY, z: layer2 });
+      newAnchors.push({ x: maxX, y: minY, z: layer2 });
+      newAnchors.push({ x: minX, y: maxY, z: layer2 });
+      newAnchors.push({ x: maxX, y: maxY, z: layer2 });
+    }
   }
 
   return deduplicateAnchors(newAnchors);
@@ -407,6 +493,8 @@ function scorePlacement(
   if (a.min.x <= TOUCH_DIST) touchCount += 1; // front wall
   if (a.min.y <= TOUCH_DIST) touchCount += 1; // left wall
   if (a.max.y >= truck.innerDims.y - TOUCH_DIST) touchCount += 1; // right wall
+  if (a.max.x >= truck.innerDims.x - TOUCH_DIST) touchCount += 1; // rear wall
+  if (a.max.z >= truck.innerDims.z - TOUCH_DIST) touchCount += 1; // ceiling
 
   // Box-to-box face adjacency (X, Y, and Z axes)
   for (const p of placed) {
@@ -432,8 +520,8 @@ function scorePlacement(
     }
   }
 
-  // Normalise to [0, 1]: max realistic touches ≈ floor(2) + front(1) + side(1) + 3 box faces + 1 z-face = 8
-  const adjacencyBonus = Math.min(touchCount, 8) / 8;
+  // Normalise to [0, 1]: max realistic touches ≈ floor(2) + front(1) + left(1) + right(1) + rear(1) + ceiling(1) + 4 box faces = 11
+  const adjacencyBonus = Math.min(touchCount, 11) / 11;
 
   // Combined score (higher = better placement)
   return (
