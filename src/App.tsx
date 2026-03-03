@@ -16,6 +16,7 @@ import { SplashScreen } from './components/SplashScreen';
 import './App.css';
 import { buildStackClass, formatCaseCsv, parseCaseCsv, sanitizeSkuId } from './lib/caseCsv';
 import { composeStackClass, parseStackClass } from './lib/stackRules';
+import { useHaptics } from './hooks/useHaptics';
 
 const ORDER_BUCKET_MM = 100;
 const STACK_GLUE_Z_TOL_MM = 6;
@@ -312,6 +313,7 @@ type IOSNavigator = Navigator & { standalone?: boolean };
 
 function App() {
   const iconUrl = `${import.meta.env.BASE_URL}icon-192x192.png`;
+  const { trigger: haptic } = useHaptics();
   const [state, actions] = usePlanner();
   const [autoPackQuantities, setAutoPackQuantities] = useState<Record<string, number>>({});
   const [planName, setPlanName] = useState('');
@@ -1192,6 +1194,7 @@ function App() {
   const handleAutoLoadAction = () => {
     if (hasAutoLoadQuantities) {
       actions.runAutoPack(new Map(Object.entries(autoPackQuantities).map(([k, v]) => [k, Number(v)])));
+      haptic('success');
       setSelectedStagedIds([]);
       return;
     }
@@ -1199,7 +1202,7 @@ function App() {
     const stagedIds = state.instances.filter(i => i.staged).map(i => i.id);
     if (stagedIds.length > 0) {
       const res = actions.autoPlaceInstances(stagedIds);
-      if (!res.valid) console.warn('Autoplace all staged failed', res);
+      if (res.valid) { haptic('success'); } else { haptic('error'); console.warn('Autoplace all staged failed', res); }
       setSelectedStagedIds([]);
       return;
     }
@@ -1210,20 +1213,20 @@ function App() {
       <header className="app-header">
         <h1>{t.appTitle}</h1>
         <div className="header-actions">
-          <button onClick={() => setLeftCollapsed(v => !v)}>{leftCollapsed ? t.showLeft : t.hideLeft}</button>
-          <button onClick={() => setRightCollapsed(v => !v)}>{rightCollapsed ? t.showRight : t.hideRight}</button>
-          <button onClick={() => setShowNewTruck(true)}>{t.newTruckType}</button>
-          <button onClick={() => setShowNewCase(true)}>{t.newCaseType}</button>
-          <button onClick={() => setShowSaveDialog(true)} disabled={!state.truck || placedInstances.length === 0}>{t.savePlan}</button>
-          <button onClick={printReportPdf} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
-          <button onClick={printOrderedItemList} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
-          <button onClick={() => setShowCaseLabelsDialog(true)} disabled={!state.truck || placedInstances.length === 0}>{t.printCaseLabels}</button>
-          <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
-          <button onClick={() => setLang((prev) => (prev === 'es' ? 'en' : 'es'))}>{lang === 'es' ? 'EN' : 'ES'}</button>
-          <button onClick={() => setShowAbout(true)}>{t.about}</button>
-          <button onClick={() => setShowLoadDialog(true)}>{t.loadPlan}</button>
-          <button onClick={handleExportCases} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
-          <button onClick={() => caseImportInputRef.current?.click()}>{t.importCasesCsv}</button>
+          <button onClick={() => { haptic('nudge'); setLeftCollapsed(v => !v); }}>{leftCollapsed ? t.showLeft : t.hideLeft}</button>
+          <button onClick={() => { haptic('nudge'); setRightCollapsed(v => !v); }}>{rightCollapsed ? t.showRight : t.hideRight}</button>
+          <button onClick={() => { haptic('nudge'); setShowNewTruck(true); }}>{t.newTruckType}</button>
+          <button onClick={() => { haptic('nudge'); setShowNewCase(true); }}>{t.newCaseType}</button>
+          <button onClick={() => { haptic('nudge'); setShowSaveDialog(true); }} disabled={!state.truck || placedInstances.length === 0}>{t.savePlan}</button>
+          <button onClick={() => { haptic('nudge'); printReportPdf(); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
+          <button onClick={() => { haptic('nudge'); printOrderedItemList(); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
+          <button onClick={() => { haptic('nudge'); setShowCaseLabelsDialog(true); }} disabled={!state.truck || placedInstances.length === 0}>{t.printCaseLabels}</button>
+          <button onClick={() => { haptic('nudge'); setTheme(t => t === 'dark' ? 'light' : 'dark'); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
+          <button onClick={() => { haptic('nudge'); setLang((prev) => (prev === 'es' ? 'en' : 'es')); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
+          <button onClick={() => { haptic('nudge'); setShowAbout(true); }}>{t.about}</button>
+          <button onClick={() => { haptic('nudge'); setShowLoadDialog(true); }}>{t.loadPlan}</button>
+          <button onClick={() => { haptic('nudge'); handleExportCases(); }} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
+          <button onClick={() => { haptic('nudge'); caseImportInputRef.current?.click(); }}>{t.importCasesCsv}</button>
           <input
             ref={caseImportInputRef}
             type="file"
@@ -1235,6 +1238,7 @@ function App() {
               try {
                 await handleImportCases(file);
               } catch (err) {
+                haptic('error');
                 const message = err instanceof Error ? err.message : String(err);
                 setImportError(`${t.importCasesFailed}: ${message}`);
                 console.error('Import failed', err);
@@ -1243,15 +1247,15 @@ function App() {
               }
             }}
           />
-          <button onClick={() => actions.clearAll()} disabled={state.instances.length === 0}>{t.clearAll}</button>
+          <button onClick={() => { haptic('nudge'); actions.clearAll(); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
           <button
-            onClick={handleAutoLoadAction}
+            onClick={() => { haptic('nudge'); handleAutoLoadAction(); }}
             disabled={!state.truck || (!hasStagedItems && !hasAutoLoadQuantities)}
           >
             {t.autoPack}
           </button>
         </div>
-        <button className="mobile-menu-btn" onClick={() => setShowMobileMenu(true)} aria-label={t.mobileMenuTitle}>
+        <button className="mobile-menu-btn" onClick={() => { haptic('nudge'); setShowMobileMenu(true); }} aria-label={t.mobileMenuTitle}>
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect y="3" width="20" height="2" rx="1" fill="currentColor" /><rect y="9" width="20" height="2" rx="1" fill="currentColor" /><rect y="15" width="20" height="2" rx="1" fill="currentColor" /></svg>
         </button>
       </header>
@@ -1264,7 +1268,7 @@ function App() {
               <span>{toast.message}</span>
               <button
                 type="button"
-                onClick={() => setToasts(prev => prev.filter(ti => ti.id !== toast.id))}
+                onClick={() => { haptic('nudge'); setToasts(prev => prev.filter(ti => ti.id !== toast.id)); }}
                 aria-label={lang === 'es' ? 'Cerrar notificacion' : 'Dismiss notification'}
               >
                 ×
@@ -1275,28 +1279,29 @@ function App() {
       )}
 
       {showMobileMenu && (
-        <div className="mobile-menu-overlay" onClick={() => setShowMobileMenu(false)}>
+        <div className="mobile-menu-overlay" onClick={() => { haptic('nudge'); setShowMobileMenu(false); }}>
           <div className="mobile-menu-sheet" onClick={e => e.stopPropagation()}>
             <div className="mobile-menu-header">
               <span>{t.mobileMenuTitle}</span>
-              <button onClick={() => setShowMobileMenu(false)} aria-label={t.close}>&times;</button>
+              <button onClick={() => { haptic('nudge'); setShowMobileMenu(false); }} aria-label={t.close}>&times;</button>
             </div>
             <div className="mobile-menu-items">
-              <button onClick={() => { setShowNewTruck(true); setShowMobileMenu(false); }}>{t.newTruckType}</button>
-              <button onClick={() => { setShowNewCase(true); setShowMobileMenu(false); }}>{t.newCaseType}</button>
-              <button onClick={() => { setShowSaveDialog(true); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0}>{t.savePlan}</button>
-              <button onClick={() => { setShowLoadDialog(true); setShowMobileMenu(false); }}>{t.loadPlan}</button>
-              <button onClick={() => { printReportPdf(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
-              <button onClick={() => { printOrderedItemList(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
-              <button onClick={() => { setShowCaseLabelsDialog(true); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0}>{t.printCaseLabels}</button>
-              <button onClick={() => { setTheme(v => v === 'dark' ? 'light' : 'dark'); setShowMobileMenu(false); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
-              <button onClick={() => { setLang(prev => prev === 'es' ? 'en' : 'es'); setShowMobileMenu(false); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
-              <button onClick={() => { setShowAbout(true); setShowMobileMenu(false); }}>{t.about}</button>
-              <button onClick={() => { handleExportCases(); setShowMobileMenu(false); }} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
-              <button onClick={() => { caseImportInputRef.current?.click(); setShowMobileMenu(false); }}>{t.importCasesCsv}</button>
-              <button onClick={() => { actions.clearAll(); setShowMobileMenu(false); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
+              <button onClick={() => { haptic('nudge'); setShowNewTruck(true); setShowMobileMenu(false); }}>{t.newTruckType}</button>
+              <button onClick={() => { haptic('nudge'); setShowNewCase(true); setShowMobileMenu(false); }}>{t.newCaseType}</button>
+              <button onClick={() => { haptic('nudge'); setShowSaveDialog(true); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0}>{t.savePlan}</button>
+              <button onClick={() => { haptic('nudge'); setShowLoadDialog(true); setShowMobileMenu(false); }}>{t.loadPlan}</button>
+              <button onClick={() => { haptic('nudge'); printReportPdf(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printPdf}</button>
+              <button onClick={() => { haptic('nudge'); printOrderedItemList(); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0 || printing}>{printing ? t.preparingPdf : t.printItemList}</button>
+              <button onClick={() => { haptic('nudge'); setShowCaseLabelsDialog(true); setShowMobileMenu(false); }} disabled={!state.truck || placedInstances.length === 0}>{t.printCaseLabels}</button>
+              <button onClick={() => { haptic('nudge'); setTheme(v => v === 'dark' ? 'light' : 'dark'); setShowMobileMenu(false); }}>{theme === 'dark' ? t.lightMode : t.darkMode}</button>
+              <button onClick={() => { haptic('nudge'); setLang(prev => prev === 'es' ? 'en' : 'es'); setShowMobileMenu(false); }}>{lang === 'es' ? 'EN' : 'ES'}</button>
+              <button onClick={() => { haptic('nudge'); setShowAbout(true); setShowMobileMenu(false); }}>{t.about}</button>
+              <button onClick={() => { haptic('nudge'); handleExportCases(); setShowMobileMenu(false); }} disabled={state.cases.length === 0}>{t.exportCasesCsv}</button>
+              <button onClick={() => { haptic('nudge'); caseImportInputRef.current?.click(); setShowMobileMenu(false); }}>{t.importCasesCsv}</button>
+              <button onClick={() => { haptic('nudge'); actions.clearAll(); setShowMobileMenu(false); }} disabled={state.instances.length === 0}>{t.clearAll}</button>
               <button
                 onClick={() => {
+                  haptic('nudge');
                   handleAutoLoadAction();
                   setShowMobileMenu(false);
                 }}
@@ -1332,41 +1337,41 @@ function App() {
 
         <section className="main-view" onMouseDown={() => setItemActionsMenu(null)}>
           <div className="view-controls">
-            <button onClick={() => setViewLocked(v => !v)} disabled={!state.truck}>
+            <button onClick={() => { haptic('nudge'); setViewLocked(v => !v); }} disabled={!state.truck}>
               {viewLocked ? t.unlockView : t.lockView}
             </button>
             <button
               className={cameraPreset === 'top' ? 'selected' : ''}
-              onClick={() => setCameraPreset('top')}
+              onClick={() => { haptic('nudge'); setCameraPreset('top'); }}
               disabled={!state.truck}
             >
               {t.top}
             </button>
             <button
               className={cameraPreset === 'side-left' ? 'selected' : ''}
-              onClick={() => setCameraPreset('side-left')}
+              onClick={() => { haptic('nudge'); setCameraPreset('side-left'); }}
               disabled={!state.truck}
             >
               {t.sideLeft}
             </button>
             <button
               className={cameraPreset === 'side-right' ? 'selected' : ''}
-              onClick={() => setCameraPreset('side-right')}
+              onClick={() => { haptic('nudge'); setCameraPreset('side-right'); }}
               disabled={!state.truck}
             >
               {t.sideRight}
             </button>
             <button
               className={cameraPreset === 'iso' ? 'selected' : ''}
-              onClick={() => setCameraPreset('iso')}
+              onClick={() => { haptic('nudge'); setCameraPreset('iso'); }}
               disabled={!state.truck}
             >
               {t.iso}
             </button>
-            <button onClick={() => setShowMetricsOverlay(v => !v)} disabled={!state.truck}>
+            <button onClick={() => { haptic('nudge'); setShowMetricsOverlay(v => !v); }} disabled={!state.truck}>
               {showMetricsOverlay ? t.hideMetricsOverlay : t.showMetricsOverlay}
             </button>
-            <button onClick={() => setShowSpatialMetrics(v => !v)} disabled={!state.truck}>
+            <button onClick={() => { haptic('nudge'); setShowSpatialMetrics(v => !v); }} disabled={!state.truck}>
               {showSpatialMetrics ? t.hideSpatialMetrics : t.showSpatialMetrics}
             </button>
             {viewLocked && <span className="view-hint">{t.viewHint}</span>}
@@ -1374,6 +1379,7 @@ function App() {
           {itemActionsMenu && (
             <div className="item-actions-menu" style={{ left: itemActionsMenu.x, top: itemActionsMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
               <button onClick={() => {
+                haptic('nudge');
                 const instance = state.instances.find(i => i.id === itemActionsMenu.id);
                 if (!instance) return;
                 const nextYaw = (((instance.yaw + 90) % 360) as Yaw);
@@ -1385,6 +1391,7 @@ function App() {
               </button>
               {itemActionsMenu.tiltAllowed && (
                 <button onClick={() => {
+                  haptic('nudge');
                   const instance = state.instances.find(i => i.id === itemActionsMenu.id);
                   if (!instance) return;
                   const current = instance.tilt ?? { y: 0 };
@@ -1400,6 +1407,7 @@ function App() {
               )}
               {itemActionsMenu.canUngroup && (
                 <button onClick={() => {
+                  haptic('nudge');
                   const neighbors = stackedAdjacency.get(itemActionsMenu.id);
                   if (!neighbors || neighbors.size === 0) {
                     setItemActionsMenu(null);
@@ -1425,6 +1433,7 @@ function App() {
             skus={state.skus}
             metrics={state.metrics}
             showSpatialMetrics={showSpatialMetrics}
+            onHaptic={(pattern) => haptic(pattern)}
             itemNumbers={itemNumbers}
             selectedId={state.selectedInstanceId}
             onSelect={actions.selectInstance}
@@ -1451,8 +1460,11 @@ function App() {
                   if (delta.x === 0 && delta.y === 0 && delta.z === 0) return true;
                   const groupedResult = actions.moveInstancesByDelta(groupedIds, delta);
                   if (!groupedResult.valid) {
+                    haptic('error');
                     pushToast(buildMoveToastMessage(groupedResult, lang));
                     console.warn('Grouped move failed:', groupedResult);
+                  } else {
+                    haptic('success');
                   }
                   return groupedResult.valid;
                 }
@@ -1463,13 +1475,18 @@ function App() {
                 const reason = buildMoveToastMessage(result, lang);
                 const fallback = actions.updateInstance(instanceId, { position: { ...position, z: 0 } });
                 if (fallback.valid) {
+                  haptic('success');
                   pushToast(lang === 'es' ? `${reason} Se movio al piso.` : `${reason} Moved to floor.`);
                 } else {
+                  haptic('error');
                   pushToast(reason);
                 }
                 result = fallback;
               } else if (!result.valid) {
+                haptic('error');
                 pushToast(buildMoveToastMessage(result, lang));
+              } else {
+                haptic('success');
               }
               if (!result.valid) console.warn('Move failed:', result);
               return result.valid;
@@ -1493,7 +1510,7 @@ function App() {
           {state.truck && (
             <button
               className="mobile-autoload-fab"
-              onClick={handleAutoLoadAction}
+              onClick={() => { haptic('nudge'); handleAutoLoadAction(); }}
               disabled={!hasStagedItems && !hasAutoLoadQuantities}
             >
               {t.autoPack}
@@ -1503,17 +1520,19 @@ function App() {
             <div className="mobile-case-actions">
               <span className="mobile-case-name">#{itemNumbers.get(selectedInstance.id) ?? '-'} {selectedSku.name}</span>
               <button onClick={() => {
+                haptic('nudge');
                 const nextYaw = (((selectedInstance.yaw + 90) % 360) as Yaw);
                 actions.updateInstance(selectedInstance.id, { yaw: nextYaw });
               }}>{t.rotate90}</button>
               {(selectedSku.tiltAllowed || selectedTiltRequired) && (
                 <button onClick={() => {
+                  haptic('nudge');
                   if (selectedTiltRequired) return;
                   const current = selectedInstance.tilt ?? { y: 0 };
                   actions.updateInstance(selectedInstance.id, { tilt: current.y === 90 ? { y: 0 } : { y: 90 } });
                 }} disabled={selectedTiltRequired}>{(selectedInstance.tilt?.y ?? 0) === 90 ? t.noTilt : t.tiltY90}</button>
               )}
-              <button className="danger" onClick={() => actions.removeCase(selectedInstance.id)}>{t.remove}</button>
+              <button className="danger" onClick={() => { haptic('nudge'); actions.removeCase(selectedInstance.id); }}>{t.remove}</button>
             </div>
           )}
           {showMetricsOverlay && (
@@ -1538,6 +1557,7 @@ function App() {
             instanceCounts={caseInstanceCounts}
             lang={lang}
             onPlace={(skuId, pos, yaw) => {
+              haptic('nudge');
               const result = actions.placeCase(skuId, pos, yaw);
               if (!result.valid) console.warn('Placement failed:', result);
             }}
@@ -1568,8 +1588,9 @@ function App() {
               <button
                 disabled={selectedStagedIds.length === 0}
                 onClick={() => {
+                  haptic('nudge');
                   const res = actions.autoPlaceInstances(selectedStagedIds);
-                  if (!res.valid) console.warn('Autoplace failed', res);
+                  if (res.valid) { haptic('success'); } else { haptic('error'); console.warn('Autoplace failed', res); }
                   setSelectedStagedIds([]);
                 }}
               >
@@ -1586,7 +1607,7 @@ function App() {
                       setSelectedStagedIds(prev => e.target.checked ? [...prev, inst.id] : prev.filter(id => id !== inst.id));
                     }}
                   />
-                  <span onClick={() => actions.selectInstance(inst.id)}>#{stagedItemNumbers.get(inst.id) ?? '-'} {getCaseLabel(inst)}</span>
+                  <span onClick={() => { haptic('nudge'); actions.selectInstance(inst.id); }}>#{stagedItemNumbers.get(inst.id) ?? '-'} {getCaseLabel(inst)}</span>
                   <small>{t.staged}</small>
                 </label>
               ))}
@@ -1601,16 +1622,16 @@ function App() {
                   key={inst.id}
                   className={`placed-card ${state.selectedInstanceId === inst.id ? 'selected' : ''}`}
                   draggable
-                  onDragStart={() => setDraggedId(inst.id)}
+                  onDragStart={() => { haptic('nudge'); setDraggedId(inst.id); }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => {
                     if (draggedId && draggedId !== inst.id) {
                       const res = actions.swapInstancePositions(draggedId, inst.id);
-                      if (!res.valid) console.warn('Swap failed', res);
+                      if (res.valid) { haptic('success'); } else { console.warn('Swap failed', res); }
                     }
                     setDraggedId(null);
                   }}
-                  onTouchStart={() => setDraggedId(inst.id)}
+                  onTouchStart={() => { haptic('nudge'); setDraggedId(inst.id); }}
                   onTouchEnd={(e) => {
                     const touch = e.changedTouches[0];
                     if (!touch) return;
@@ -1619,11 +1640,11 @@ function App() {
                     setTouchDropId(dropId ?? null);
                     if (draggedId && dropId && draggedId !== dropId) {
                       const res = actions.swapInstancePositions(draggedId, dropId);
-                      if (!res.valid) console.warn('Swap failed', res);
+                      if (res.valid) { haptic('success'); } else { console.warn('Swap failed', res); }
                     }
                     setDraggedId(null);
                   }}
-                  onClick={() => actions.selectInstance(inst.id)}
+                  onClick={() => { haptic('nudge'); actions.selectInstance(inst.id); }}
                   data-inst-id={inst.id}
                 >
                   <span>#{itemNumbers.get(inst.id) ?? '-'} {getCaseLabel(inst)}</span>
@@ -1649,7 +1670,7 @@ function App() {
               </div>
               <div className="yaw-buttons">
                 {[0, 90, 180, 270].map((y) => (
-                  <button key={y} className={selectedInstance.yaw === y ? 'selected' : ''} onClick={() => actions.updateInstance(selectedInstance.id, { yaw: y as Yaw })}>
+                  <button key={y} className={selectedInstance.yaw === y ? 'selected' : ''} onClick={() => { haptic('nudge'); actions.updateInstance(selectedInstance.id, { yaw: y as Yaw }); }}>
                     {y}°
                   </button>
                 ))}
@@ -1658,6 +1679,7 @@ function App() {
                 <button
                   className={(selectedInstance.tilt?.y ?? 0) === 0 ? 'selected' : ''}
                   onClick={() => {
+                    haptic('nudge');
                     if (selectedTiltRequired) return;
                     actions.updateInstance(selectedInstance.id, { tilt: { y: 0 } });
                   }}
@@ -1667,35 +1689,35 @@ function App() {
                 </button>
                 <button
                   className={(selectedInstance.tilt?.y ?? 0) === 90 ? 'selected' : ''}
-                  onClick={() => actions.updateInstance(selectedInstance.id, { tilt: { y: 90 } })}
+                  onClick={() => { haptic('nudge'); actions.updateInstance(selectedInstance.id, { tilt: { y: 90 } }); }}
                   disabled={!(selectedSku?.tiltAllowed || selectedTiltRequired)}
                 >
                   {t.tiltY90}
                 </button>
               </div>
-              <button onClick={() => actions.removeCase(selectedInstance.id)}>{t.remove}</button>
+              <button onClick={() => { haptic('nudge'); actions.removeCase(selectedInstance.id); }}>{t.remove}</button>
             </div>
           )}
         </aside>
       </main>
 
       <nav className="mobile-tab-bar">
-        <button className={mobileTab === 'trucks' ? 'active' : ''} onClick={() => setMobileTab('trucks')}>
+        <button className={mobileTab === 'trucks' ? 'active' : ''} onClick={() => { haptic('nudge'); setMobileTab('trucks'); }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13" rx="2" /><path d="M16 8h4l3 3v5h-7V8z" /><circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" /></svg>
           <span>{t.mobileTabTrucks}</span>
         </button>
-        <button className={mobileTab === 'view' ? 'active' : ''} onClick={() => setMobileTab('view')}>
+        <button className={mobileTab === 'view' ? 'active' : ''} onClick={() => { haptic('nudge'); setMobileTab('view'); }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
           <span>{t.mobileTabView}</span>
         </button>
-        <button className={mobileTab === 'cases' ? 'active' : ''} onClick={() => setMobileTab('cases')}>
+        <button className={mobileTab === 'cases' ? 'active' : ''} onClick={() => { haptic('nudge'); setMobileTab('cases'); }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></svg>
           <span>{t.mobileTabCases}</span>
         </button>
       </nav>
 
       {showNewTruck && (
-        <div className="dialog-overlay" onClick={() => setShowNewTruck(false)}>
+        <div className="dialog-overlay" onClick={() => { haptic('nudge'); setShowNewTruck(false); }}>
           <div className="dialog" onClick={e => e.stopPropagation()}>
             <h3>{t.createTruckType}</h3>
             <p className="dialog-help">{t.truckHelp}</p>
@@ -1726,7 +1748,7 @@ function App() {
               </label>
             </div>
             <div className="dialog-actions">
-              <button onClick={() => setShowNewTruck(false)}>{t.cancel}</button>
+              <button onClick={() => { haptic('nudge'); setShowNewTruck(false); }}>{t.cancel}</button>
               <button className="primary" onClick={async () => {
                 try {
                   await actions.createTruck({
@@ -1737,8 +1759,10 @@ function App() {
                     axle: { frontX: truckForm.frontX, rearX: truckForm.rearX, maxFrontKg: truckForm.maxFrontKg, maxRearKg: truckForm.maxRearKg },
                     maxLeftRightPercentDiff: truckForm.maxLr,
                   });
+                  haptic('success');
                   setShowNewTruck(false);
                 } catch (error) {
+                  haptic('error');
                   pushToast(lang === 'es'
                     ? `No se pudo crear el camion: ${getErrorMessage(error)}`
                     : `Could not create truck: ${getErrorMessage(error)}`);
@@ -1750,7 +1774,7 @@ function App() {
       )}
 
       {showNewCase && (
-        <div className="dialog-overlay" onClick={() => setShowNewCase(false)}>
+        <div className="dialog-overlay" onClick={() => { haptic('nudge'); setShowNewCase(false); }}>
           <div className="dialog" onClick={e => e.stopPropagation()}>
             <h3>{t.createCaseType}</h3>
             <p className="dialog-help">{t.caseHelp}</p>
@@ -1831,7 +1855,7 @@ function App() {
               <label className="color-input">{t.color} <input type="color" value={caseForm.color} onChange={e => setCaseForm({ ...caseForm, color: e.target.value })} /></label>
             </div>
             <div className="dialog-actions">
-              <button onClick={() => setShowNewCase(false)}>{t.cancel}</button>
+              <button onClick={() => { haptic('nudge'); setShowNewCase(false); }}>{t.cancel}</button>
               <button className="primary" onClick={async () => {
                 const rawMaxStackLevel = Number(caseForm.maxStackLevel);
                 const maxStackLevel = Number.isFinite(rawMaxStackLevel) && rawMaxStackLevel >= 1
@@ -1861,6 +1885,7 @@ function App() {
                   stackClass: nextStackClass ?? null,
                   color: caseForm.color,
                 });
+                haptic('success');
                 setShowNewCase(false);
               }}>{t.create}</button>
             </div>
@@ -1869,15 +1894,15 @@ function App() {
       )}
 
       {showSaveDialog && (
-        <div className="dialog-overlay" onClick={() => setShowSaveDialog(false)}>
+        <div className="dialog-overlay" onClick={() => { haptic('nudge'); setShowSaveDialog(false); }}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <h3>{t.saveLoadPlan}</h3>
             <input type="text" placeholder={t.planNamePlaceholder} value={planName} onChange={(e) => setPlanName(e.target.value)} autoFocus />
             <div className="dialog-actions">
-              <button onClick={() => setShowSaveDialog(false)}>{t.cancel}</button>
+              <button onClick={() => { haptic('nudge'); setShowSaveDialog(false); }}>{t.cancel}</button>
               <button className="primary" disabled={!planName.trim() || saving} onClick={async () => {
                 setSaving(true);
-                try { await actions.savePlan(planName.trim()); } finally { setSaving(false); setPlanName(''); setShowSaveDialog(false); }
+                try { await actions.savePlan(planName.trim()); haptic('success'); } finally { setSaving(false); setPlanName(''); setShowSaveDialog(false); }
               }}>{saving ? t.saving : t.save}</button>
             </div>
           </div>
@@ -1885,13 +1910,13 @@ function App() {
       )}
 
       {showLoadDialog && (
-        <div className="dialog-overlay" onClick={() => setShowLoadDialog(false)}>
+        <div className="dialog-overlay" onClick={() => { haptic('nudge'); setShowLoadDialog(false); }}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
             <h3>{t.loadPlanTitle}</h3>
             {savedPlans.length === 0 ? <p className="empty-message">{t.noSavedPlans}</p> : (
               <div className="plan-list">
                 {savedPlans.map(plan => (
-                  <button key={plan.id} className="plan-card" onClick={async () => { await actions.loadPlan(plan.id); setShowLoadDialog(false); }}>
+                  <button key={plan.id} className="plan-card" onClick={async () => { haptic('nudge'); await actions.loadPlan(plan.id); haptic('success'); setShowLoadDialog(false); }}>
                     <div className="plan-name">{plan.name}</div>
                     <div className="plan-meta">{plan.totalWeightKg?.toFixed(0) ?? 0} kg | {plan.status}</div>
                     <div className="plan-date">{new Date(plan.createdAt).toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US')}</div>
@@ -1899,17 +1924,17 @@ function App() {
                 ))}
               </div>
             )}
-            <div className="dialog-actions"><button onClick={() => setShowLoadDialog(false)}>{t.close}</button></div>
+            <div className="dialog-actions"><button onClick={() => { haptic('nudge'); setShowLoadDialog(false); }}>{t.close}</button></div>
           </div>
         </div>
       )}
 
       {showCaseLabelsDialog && (
-        <div className="dialog-overlay" onClick={() => setShowCaseLabelsDialog(false)}>
+        <div className="dialog-overlay" onClick={() => { haptic('nudge'); setShowCaseLabelsDialog(false); }}>
           <div className="dialog case-labels-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="cl-dialog-header">
               <h3>{t.caseLabelsSetup}</h3>
-              <button className="cl-close-btn" onClick={() => setShowCaseLabelsDialog(false)} aria-label="Close">✕</button>
+              <button className="cl-close-btn" onClick={() => { haptic('nudge'); setShowCaseLabelsDialog(false); }} aria-label="Close">✕</button>
             </div>
 
             <div className="cl-section">
@@ -1937,14 +1962,14 @@ function App() {
               <div className="cl-font-toggle">
                 <button
                   className={`cl-font-btn${caseLabelsFont === 'clear' ? ' active' : ''}`}
-                  onClick={() => setCaseLabelsFont('clear')}
+                  onClick={() => { haptic('nudge'); setCaseLabelsFont('clear'); }}
                 >
                   <span className="cl-font-preview" style={{ fontFamily: 'Segoe UI, Arial, sans-serif' }}>Aa</span>
                   <span>{t.labelFontClear}</span>
                 </button>
                 <button
                   className={`cl-font-btn${caseLabelsFont === 'handwritten' ? ' active' : ''}`}
-                  onClick={() => setCaseLabelsFont('handwritten')}
+                  onClick={() => { haptic('nudge'); setCaseLabelsFont('handwritten'); }}
                 >
                   <span className="cl-font-preview" style={{ fontFamily: 'cursive' }}>Aa</span>
                   <span>{t.labelFontHandwritten}</span>
@@ -1985,16 +2010,16 @@ function App() {
             </div>
 
             <div className="dialog-actions">
-              <button onClick={() => setShowCaseLabelsDialog(false)}>{t.cancel}</button>
-              <button onClick={() => printCaseLabels('pdf')}>📄 {t.labelSavePdf}</button>
-              <button className="primary" onClick={() => printCaseLabels('print')}>🖨 {t.labelPrint}</button>
+              <button onClick={() => { haptic('nudge'); setShowCaseLabelsDialog(false); }}>{t.cancel}</button>
+              <button onClick={() => { haptic('nudge'); printCaseLabels('pdf'); }}>📄 {t.labelSavePdf}</button>
+              <button className="primary" onClick={() => { haptic('nudge'); printCaseLabels('print'); }}>🖨 {t.labelPrint}</button>
             </div>
           </div>
         </div>
       )}
 
       {showAbout && (
-        <div className="dialog-overlay" onClick={() => setShowAbout(false)}>
+        <div className="dialog-overlay" onClick={() => { haptic('nudge'); setShowAbout(false); }}>
           <div className="dialog about-dialog" onClick={(e) => e.stopPropagation()}>
             <div style={{ textAlign: 'center', margin: '2rem 0' }}>
               <img src={iconUrl} alt="Logo" style={{ width: 80, height: 80, borderRadius: 16, marginBottom: '1rem', boxShadow: 'var(--shadow-md)' }} />
@@ -2002,7 +2027,7 @@ function App() {
               <p style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>{t.createdBy}</p>
             </div>
             <div className="dialog-actions">
-              <button className="primary" onClick={() => setShowAbout(false)}>{t.close}</button>
+              <button className="primary" onClick={() => { haptic('nudge'); setShowAbout(false); }}>{t.close}</button>
             </div>
           </div>
         </div>

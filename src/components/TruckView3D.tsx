@@ -22,6 +22,7 @@ interface TruckView3DProps {
   onMoveInstance: (id: string, position: { x: number; y: number; z: number }) => boolean;
   resolveDragPosition: (id: string, position: { x: number; y: number; z: number }) => { x: number; y: number; z: number };
   onOpenItemActions: (payload: { id: string; clientX: number; clientY: number; tiltAllowed: boolean }) => void;
+  onHaptic?: (pattern: string) => void;
   lang: 'es' | 'en';
 }
 
@@ -39,6 +40,7 @@ export function TruckView3D({
   onMoveInstance,
   resolveDragPosition,
   onOpenItemActions,
+  onHaptic,
   lang,
 }: TruckView3DProps) {
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +120,7 @@ export function TruckView3D({
             onMoveInstance={onMoveInstance}
             resolveDragPosition={resolveDragPosition}
             onOpenItemActions={onOpenItemActions}
+            onHaptic={onHaptic}
             tiltLabel={t.tiltLabel}
             frontAxleLabel={t.frontAxle}
             rearAxleLabel={t.rearAxle}
@@ -132,7 +135,7 @@ export function TruckView3D({
 const SCALE = 0.001;
 const IGNORE_RAYCAST = () => {};
 
-function Scene({ truck, instances, skus, metrics, showSpatialMetrics, itemNumbers, selectedId, onSelect, viewLocked, onMoveInstance, resolveDragPosition, onOpenItemActions, tiltLabel, frontAxleLabel, rearAxleLabel, balanceLabel }: {
+function Scene({ truck, instances, skus, metrics, showSpatialMetrics, itemNumbers, selectedId, onSelect, viewLocked, onMoveInstance, resolveDragPosition, onOpenItemActions, onHaptic, tiltLabel, frontAxleLabel, rearAxleLabel, balanceLabel }: {
   truck: TruckType;
   instances: CaseInstance[];
   skus: Map<string, CaseSKU>;
@@ -145,6 +148,7 @@ function Scene({ truck, instances, skus, metrics, showSpatialMetrics, itemNumber
   onMoveInstance: (id: string, position: { x: number; y: number; z: number }) => boolean;
   resolveDragPosition: (id: string, position: { x: number; y: number; z: number }) => { x: number; y: number; z: number };
   onOpenItemActions: (payload: { id: string; clientX: number; clientY: number; tiltAllowed: boolean }) => void;
+  onHaptic?: (pattern: string) => void;
   tiltLabel: string;
   frontAxleLabel: string;
   rearAxleLabel: string;
@@ -342,13 +346,14 @@ function Scene({ truck, instances, skus, metrics, showSpatialMetrics, itemNumber
             clientY,
             tiltAllowed: Boolean(skus.get(inst.skuId)?.tiltAllowed),
           })}
+          onHaptic={onHaptic}
         />
       ))}
     </>
   );
 }
 
-function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLocked, onSelect, onToggleSelect, onDrop, onPreviewPosition, onOpenActions, tiltLabel }: {
+function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLocked, onSelect, onToggleSelect, onDrop, onPreviewPosition, onOpenActions, onHaptic, tiltLabel }: {
   instance: CaseInstance;
   sku?: CaseSKU;
   itemNumber?: number;
@@ -361,6 +366,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
   onDrop: (position: { x: number; y: number; z: number }) => boolean;
   onPreviewPosition: (position: { x: number; y: number; z: number }) => { x: number; y: number; z: number };
   onOpenActions: (clientX: number, clientY: number) => void;
+  onHaptic?: (pattern: string) => void;
   tiltLabel: string;
 }) {
   const [draftPosition, setDraftPosition] = useState<{ x: number; y: number; z: number } | null>(null);
@@ -437,6 +443,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
       return;
     }
     onSelect();
+    onHaptic?.('nudge');
     // Start long-press timer — fires onOpenActions after 500 ms if the pointer doesn't move.
     // This gives touch devices the same context-menu access as right-click on desktop.
     const lpX = e.nativeEvent.clientX;
@@ -444,6 +451,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
     longPressTimer.current = setTimeout(() => {
       longPressTimer.current = null;
       isDragging.current = false; // prevent drag completion after long-press
+      onHaptic?.('nudge');
       onOpenActions(lpX, lpY);
     }, 500);
     pointerId.current = e.pointerId;
@@ -515,7 +523,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
       rotation={[0, 0, 0]}
       onClick={(e) => {
         e.stopPropagation();
-        if (!viewLocked && !moved.current) onToggleSelect();
+        if (!viewLocked && !moved.current) { onHaptic?.('nudge'); onToggleSelect(); }
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -524,6 +532,7 @@ function CaseMesh({ instance, sku, itemNumber, truck, scale, isSelected, viewLoc
         if (!viewLocked) return;
         e.stopPropagation();
         e.nativeEvent.preventDefault();
+        onHaptic?.('nudge');
         onOpenActions(e.nativeEvent.clientX, e.nativeEvent.clientY);
       }}
       castShadow

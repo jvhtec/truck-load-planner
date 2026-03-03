@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CaseSKU, Yaw } from '../core/types';
 import { composeStackClass, parseStackClass } from '../lib/stackRules';
+import { useHaptics } from '../hooks/useHaptics';
 
 interface CaseCatalogProps {
   cases: CaseSKU[];
@@ -13,6 +14,7 @@ interface CaseCatalogProps {
 }
 
 export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDeleteCase, onNewCase, lang }: CaseCatalogProps) {
+  const { trigger: haptic } = useHaptics();
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
@@ -165,7 +167,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
       <h3>{t.title}</h3>
 
       {onNewCase && (
-        <button className="place-button" style={{ marginBottom: '0.75rem' }} onClick={onNewCase}>
+        <button className="place-button" style={{ marginBottom: '0.75rem' }} onClick={() => { haptic('nudge'); onNewCase!(); }}>
           + {t.newCase}
         </button>
       )}
@@ -173,7 +175,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
         {cases.length === 0 ? <p className="empty-message">{t.empty}</p> : (
           cases.map((c) => (
             <div key={c.skuId} className={`case-card ${selectedSku === c.skuId ? 'selected' : ''}`}>
-              <button type="button" className="case-card-main" onClick={() => setSelectedSku(c.skuId)}>
+              <button type="button" className="case-card-main" onClick={() => { haptic('nudge'); setSelectedSku(c.skuId); }}>
                 <div className="case-header-row">
                   <div className="case-header-main">
                     <div className="case-color-dot" style={{ backgroundColor: c.color ?? '#6366f1' }} />
@@ -196,6 +198,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                   type="button"
                   className="case-action-btn case-action-add"
                   onClick={() => {
+                    haptic('nudge');
                     setSelectedSku(c.skuId);
                     onPlace(c.skuId, { x: 0, y: 0, z: 0 }, getPreferredYaw(c));
                   }}
@@ -206,6 +209,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                   type="button"
                   className="case-action-btn case-action-edit"
                   onClick={() => {
+                    haptic('nudge');
                     setSelectedSku(c.skuId);
                     setEditError(null);
                     setEditOpen(true);
@@ -220,7 +224,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
       </div>
 
       {selectedCase && editOpen && (
-        <div className="dialog-overlay" onClick={() => { if (!savingEdit) setEditOpen(false); }}>
+        <div className="dialog-overlay" onClick={() => { if (!savingEdit) { haptic('nudge'); setEditOpen(false); } }}>
           <div className="dialog case-edit-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>{t.editTitle}</h3>
             <div className="position-inputs compact">
@@ -312,6 +316,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
               className="place-button"
               disabled={savingEdit}
               onClick={async () => {
+                haptic('nudge');
                 setSavingEdit(true);
                 setEditError(null);
                 try {
@@ -347,8 +352,10 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
                     stackClass: nextStackClass ?? null,
                     isContainer: editIsContainer,
                   });
+                  haptic('success');
                   setEditOpen(false);
                 } catch (err: any) {
+                  haptic('error');
                   setEditError(err?.message ?? t.saveError);
                 } finally {
                   setSavingEdit(false);
@@ -361,14 +368,17 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
               className="danger-button"
               disabled={savingEdit}
               onClick={async () => {
+                haptic('nudge');
                 if (!window.confirm(t.confirmDelete)) return;
                 setSavingEdit(true);
                 setEditError(null);
                 try {
                   await onDeleteCase(selectedCase.skuId);
+                  haptic('success');
                   setSelectedSku(null);
                   setEditOpen(false);
                 } catch (err: any) {
+                  haptic('error');
                   setEditError(err?.message ?? t.saveError);
                 } finally {
                   setSavingEdit(false);
@@ -379,7 +389,7 @@ export function CaseCatalog({ cases, instanceCounts, onPlace, onUpdateCase, onDe
             </button>
             {editError && <p className="error-message">{editError}</p>}
             <div className="dialog-actions">
-              <button onClick={() => setEditOpen(false)} disabled={savingEdit}>{t.close}</button>
+              <button onClick={() => { haptic('nudge'); setEditOpen(false); }} disabled={savingEdit}>{t.close}</button>
             </div>
           </div>
         </div>
