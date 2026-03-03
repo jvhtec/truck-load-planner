@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { TruckType } from '../core/types';
+import { useHaptics } from '../hooks/useHaptics';
 
 interface TruckSelectorProps {
   trucks: TruckType[];
@@ -18,6 +19,7 @@ interface TruckSelectorProps {
 }
 
 export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDeleteTruck, onNewTruck, lang }: TruckSelectorProps) {
+  const { trigger: haptic } = useHaptics();
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +107,7 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
     <div className="truck-selector">
       <h3>{t.title}</h3>
       {onNewTruck && (
-        <button className="place-button" style={{ marginBottom: '0.75rem' }} onClick={onNewTruck}>
+        <button className="place-button" style={{ marginBottom: '0.75rem' }} onClick={() => { haptic('nudge'); onNewTruck!(); }}>
           + {t.newTruck}
         </button>
       )}
@@ -117,7 +119,7 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
             <button
               key={truck.truckId}
               className={`truck-card ${selected?.truckId === truck.truckId ? 'selected' : ''}`}
-              onClick={() => onSelect(truck)}
+              onClick={() => { haptic('nudge'); onSelect(truck); }}
             >
               <div className="truck-name">{truck.name}</div>
               <div className="truck-dims">
@@ -132,7 +134,7 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
       </div>
       {selected && (
         <div className="placement-controls">
-          <button className="place-button" onClick={() => setEditOpen(v => !v)}>
+          <button className="place-button" onClick={() => { haptic('nudge'); setEditOpen(v => !v); }}>
             {editOpen ? t.editToggleClose : t.editToggleOpen}
           </button>
           {editOpen && (
@@ -162,6 +164,7 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
                 className="place-button"
                 disabled={saving}
                 onClick={async () => {
+                  haptic('nudge');
                   setSaving(true);
                   setError(null);
                   try {
@@ -172,7 +175,9 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
                       axle: { frontX: form.frontX, rearX: form.rearX, maxFrontKg: form.maxFrontKg, maxRearKg: form.maxRearKg },
                       maxLeftRightPercentDiff: form.maxLr,
                     });
+                    haptic('success');
                   } catch (err: any) {
+                    haptic('error');
                     setError(err?.message ?? 'Failed to update truck');
                   } finally {
                     setSaving(false);
@@ -185,13 +190,16 @@ export function TruckSelector({ trucks, selected, onSelect, onUpdateTruck, onDel
                 className="danger-button"
                 disabled={saving}
                 onClick={async () => {
+                  haptic('nudge');
                   if (!window.confirm(t.confirmDelete)) return;
                   setSaving(true);
                   setError(null);
                   try {
                     await onDeleteTruck(selected.truckId);
+                    haptic('success');
                     setEditOpen(false);
                   } catch (err: any) {
+                    haptic('error');
                     setError(err?.message ?? 'Failed to delete truck');
                   } finally {
                     setSaving(false);
