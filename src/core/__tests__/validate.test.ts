@@ -202,6 +202,75 @@ describe('validatePlacement – BASE_NOT_ALLOWED / TOP_CONTACT_FORBIDDEN', () =>
   });
 });
 
+describe('validatePlacement – VERTICAL_COLUMN_BLOCKED', () => {
+  const cartSku: CaseSKU = {
+    ...baseSku,
+    skuId: 'K2_CART',
+    name: 'Loaded K2 chariot',
+    dims: { l: 1000, w: 1000, h: 1500 },
+    weightKg: 250,
+    uprightOnly: true,
+    canBeBase: false,
+    topContactAllowed: false,
+    maxLoadAboveKg: 0,
+    minSupportRatio: 1,
+    stackClass: 'FLOOR_ONLY',
+    blocksVerticalColumn: true,
+  };
+
+  it('rejects cargo anywhere above a blocking cart footprint, even without direct contact', () => {
+    const skus = new Map([
+      ['K2_CART', cartSku],
+      ['BASE', baseSku],
+    ]);
+    const cart = createInstance('cart', cartSku, { x: 0, y: 700, z: 0 }, 0);
+    const ctx = makeCtx([cart], skus);
+    const floatingAbove = createInstance('above', baseSku, { x: 0, y: 600, z: 1800 }, 0);
+
+    const result = validatePlacement(floatingAbove, ctx);
+
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContain('VERTICAL_COLUMN_BLOCKED');
+    expect(result.details?.verticalColumn).toEqual({
+      blocker: 'cart',
+      blocked: 'above',
+    });
+  });
+
+  it('allows cargo beside a blocking cart when footprints do not overlap', () => {
+    const skus = new Map([
+      ['K2_CART', cartSku],
+      ['BASE', baseSku],
+    ]);
+    const cart = createInstance('cart', cartSku, { x: 0, y: 0, z: 0 }, 0);
+    const ctx = makeCtx([cart], skus);
+    const beside = createInstance('beside', baseSku, { x: 1000, y: CENTER_Y, z: 0 }, 0);
+
+    const result = validatePlacement(beside, ctx);
+
+    expect(result.violations).not.toContain('VERTICAL_COLUMN_BLOCKED');
+  });
+
+  it('rejects inserting a blocking cart under already-placed cargo', () => {
+    const skus = new Map([
+      ['K2_CART', cartSku],
+      ['BASE', baseSku],
+    ]);
+    const existingAbove = createInstance('above', baseSku, { x: 0, y: 600, z: 1800 }, 0);
+    const ctx = makeCtx([existingAbove], skus);
+    const cart = createInstance('cart', cartSku, { x: 0, y: 700, z: 0 }, 0);
+
+    const result = validatePlacement(cart, ctx);
+
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContain('VERTICAL_COLUMN_BLOCKED');
+    expect(result.details?.verticalColumn).toEqual({
+      blocker: 'cart',
+      blocked: 'above',
+    });
+  });
+});
+
 describe('validatePlacement – LOAD_EXCEEDED', () => {
   it('accepts when placed weight is within maxLoadAboveKg', () => {
     const limitedBase: CaseSKU = { ...baseSku, skuId: 'LIM', maxLoadAboveKg: 50 };
