@@ -158,6 +158,43 @@ export function validatePlacement(
     }
   }
 
+  // 4b. Full-height column keepouts.
+  //
+  // Some loaded carts/chariots have a perfectly ordinary physical height but
+  // operationally reserve the whole column above their footprint: nothing may
+  // be packed over them, even on a bridge or another support.  This is not the
+  // same rule as topContactAllowed=false, which only rejects direct contact.
+  for (const other of ctx.instances) {
+    if (other.id === candidate.id) continue;
+    if (intersectionAreaXZ(candidate.aabb, other.aabb) <= 0) continue;
+
+    const otherSku = ctx.skus.get(other.skuId);
+    if (!otherSku) continue;
+
+    const candidateIsAboveOther =
+      bottomZ(candidate.aabb) >= topZ(other.aabb) - SUPPORT_EPSILON;
+    const otherIsAboveCandidate =
+      bottomZ(other.aabb) >= topZ(candidate.aabb) - SUPPORT_EPSILON;
+
+    if (otherSku.blocksVerticalColumn && candidateIsAboveOther) {
+      violations.push('VERTICAL_COLUMN_BLOCKED');
+      details.verticalColumn = {
+        blocker: other.id,
+        blocked: candidate.id,
+      };
+      break;
+    }
+
+    if (sku.blocksVerticalColumn && otherIsAboveCandidate) {
+      violations.push('VERTICAL_COLUMN_BLOCKED');
+      details.verticalColumn = {
+        blocker: candidate.id,
+        blocked: other.id,
+      };
+      break;
+    }
+  }
+
   // 5. Support (if not on floor)
   const candBottomZ = bottomZ(candidate.aabb);
   if (candBottomZ > SUPPORT_EPSILON) {
