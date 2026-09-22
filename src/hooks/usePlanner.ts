@@ -59,6 +59,7 @@ interface DbCaseSku {
   color_hex: string | null;
   tilt_allowed: boolean | null;
   is_container: boolean | string | number | null;
+  blocks_vertical_column: boolean | string | number | null;
 }
 
 interface DbLoadPlan {
@@ -205,6 +206,7 @@ function dbToCaseSku(db: DbCaseSku): CaseSKU {
     color: db.color_hex || undefined,
     tiltAllowed: db.tilt_allowed ?? false,
     isContainer: parseDbBoolean(db.is_container),
+    blocksVerticalColumn: parseDbBoolean(db.blocks_vertical_column),
   };
 }
 
@@ -265,6 +267,7 @@ interface CreateCaseInput {
   color?: string;
   tiltAllowed?: boolean;
   isContainer?: boolean;
+  blocksVerticalColumn?: boolean;
 }
 
 const AUTOPLACE_STEP_MM = 100;
@@ -1064,6 +1067,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
       stack_class: input.stackClass || null,
       color_hex: input.color || null,
       is_container: input.isContainer ?? false,
+      blocks_vertical_column: input.blocksVerticalColumn ?? false,
     });
 
     if (error) throw error;
@@ -1084,6 +1088,7 @@ export function usePlanner(): [PlannerState, PlannerActions] {
         stackClass: input.stackClass,
         color: input.color,
         isContainer: input.isContainer ?? false,
+        blocksVerticalColumn: input.blocksVerticalColumn ?? false,
       };
       const cases = [created, ...prev.cases];
       const skus = new Map(prev.skus);
@@ -1111,6 +1116,9 @@ export function usePlanner(): [PlannerState, PlannerActions] {
     if (updates.stackClass !== undefined) payload.stack_class = updates.stackClass || null;
     if (updates.color !== undefined) payload.color_hex = updates.color || null;
     if (updates.isContainer !== undefined) payload.is_container = updates.isContainer;
+    if (updates.blocksVerticalColumn !== undefined) {
+      payload.blocks_vertical_column = updates.blocksVerticalColumn;
+    }
 
     const { data, error } = await supabase
       .from('case_skus')
