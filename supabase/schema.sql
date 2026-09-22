@@ -60,6 +60,7 @@ create table if not exists case_skus (
   can_be_base boolean not null default true,
   top_contact_allowed boolean not null default true,
   max_load_above_kg numeric(8,3) not null default 0,
+  blocks_vertical_column boolean not null default false,
   
   -- Support requirements
   min_support_ratio numeric(4,3) not null default 0.75,

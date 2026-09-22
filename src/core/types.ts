@@ -48,6 +48,14 @@ export interface CaseSKU {
   canBeBase: boolean;            // can other cases rest on top?
   topContactAllowed: boolean;    // can anything touch top surface?
   maxLoadAboveKg: number;        // max cumulative weight above (0 = strict no-stack)
+  /**
+   * Reserve this SKU's X/Y footprint all the way to the vehicle ceiling.
+   *
+   * Use for carts/chariots that have a real loaded physical height but must
+   * never have unrelated cargo packed in the airspace above them. This is
+   * stronger than topContactAllowed=false, which only forbids direct support.
+   */
+  blocksVerticalColumn?: boolean;
   
   // Support requirements
   minSupportRatio: number;       // 0.0-1.0, default 0.75
@@ -125,6 +133,7 @@ export type ValidationError =
   | 'INSUFFICIENT_SUPPORT'
   | 'BASE_NOT_ALLOWED'
   | 'TOP_CONTACT_FORBIDDEN'
+  | 'VERTICAL_COLUMN_BLOCKED'
   | 'LOAD_EXCEEDED'
   | 'AXLE_FRONT_OVER'
   | 'AXLE_REAR_OVER'
